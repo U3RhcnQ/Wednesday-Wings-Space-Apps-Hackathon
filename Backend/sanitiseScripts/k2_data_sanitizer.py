@@ -13,6 +13,13 @@ from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
 
+# Physical constants
+STEFAN_BOLTZMANN = 5.67e-8  # W m^-2 K^-4
+AU_TO_METERS = 1.496e11  # meters
+SOLAR_RADIUS_METERS = 6.957e8  # meters
+SOLAR_MASS_KG = 1.989e30  # kg
+G = 6.674e-11  # gravitational constant
+
 def validate_k2_data(file_path):
     """Validate K2 dataset file and required columns"""
     if not os.path.exists(file_path):
@@ -103,22 +110,144 @@ def remove_outliers_planet_radius(df, sigma=3):
     
     return df_clean
 
+def estimate_equilibrium_temperature(row):
+    """
+    Estimate planet equilibrium temperature using stellar parameters and orbital period.
+    
+    Formula: T_eq = T_star * sqrt(R_star / (2 * a)) * (1 - albedo)^0.25
+    where a is the semi-major axis calculated from Kepler's 3rd law
+    
+    Assumes albedo = 0.3 (typical for rocky planets)
+    """
+    try:
+        # Check if we have required parameters
+        if pd.isna(row['pl_orbper']) or pd.isna(row.get('st_teff')) or pd.isna(row.get('st_rad')):
+            return np.nan
+        
+        # Get stellar parameters
+        T_star = row['st_teff']  # Kelvin
+        R_star = row['st_rad']  # Solar radii
+        P_days = row['pl_orbper']  # Orbital period in days
+        
+        # Assume stellar mass ~ solar mass (reasonable for most K2 targets)
+        # For better accuracy, could use mass-luminosity relation if st_mass available
+        M_star = row.get('st_mass', 1.0)  # Solar masses
+        
+        # Convert period to seconds
+        P_seconds = P_days * 86400
+        
+        # Calculate semi-major axis using Kepler's 3rd law: a^3 = (G*M*T^2)/(4*pi^2)
+        a_meters = ((G * M_star * SOLAR_MASS_KG * P_seconds**2) / (4 * np.pi**2))**(1/3)
+        
+        # Convert stellar radius to meters
+        R_star_meters = R_star * SOLAR_RADIUS_METERS
+        
+        # Calculate equilibrium temperature
+        # Assuming albedo = 0.3 and full heat redistribution
+        albedo = 0.3
+        T_eq = T_star * np.sqrt(R_star_meters / (2 * a_meters)) * (1 - albedo)**0.25
+        
+        return T_eq
+        
+    except Exception as e:
+        return np.nan
+
+def estimate_stellar_temperature(row):
+    """
+    Estimate stellar temperature from stellar radius using main sequence mass-radius relation.
+    This is a rough approximation: T ~ 5800K * (R_star)^0.8
+    """
+    try:
+        if pd.isna(row.get('st_rad')):
+            return np.nan
+        
+        R_star = row['st_rad']  # Solar radii
+        
+        # Main sequence approximation (works best for 0.5 < R < 2 solar radii)
+        # Sun: T = 5778K, R = 1.0
+        T_est = 5778 * (R_star ** 0.8)
+        
+        # Sanity check - keep within realistic stellar temperature range
+        if T_est < 2000 or T_est > 10000:
+            return np.nan
+            
+        return T_est
+        
+    except Exception as e:
+        return np.nan
+
+def impute_missing_stellar_parameters(df):
+    """Estimate missing stellar temperatures from stellar radius"""
+    if 'st_teff' not in df.columns or 'st_rad' not in df.columns:
+        return df
+    
+    missing_teff = df['st_teff'].isna().sum()
+    
+    if missing_teff == 0:
+        return df
+    
+    logging.info(f'Attempting to estimate {missing_teff} missing stellar temperatures...')
+    
+    # Estimate stellar temperature for missing values
+    mask_missing = df['st_teff'].isna()
+    df.loc[mask_missing, 'st_teff_estimated'] = df[mask_missing].apply(estimate_stellar_temperature, axis=1)
+    
+    # Fill missing st_teff with estimated values
+    estimated_count = df.loc[mask_missing, 'st_teff_estimated'].notna().sum()
+    df.loc[mask_missing & df['st_teff_estimated'].notna(), 'st_teff'] = df.loc[mask_missing & df['st_teff_estimated'].notna(), 'st_teff_estimated']
+    
+    if estimated_count > 0:
+        logging.info(f'Successfully estimated {estimated_count} stellar temperatures ({estimated_count/missing_teff*100:.1f}% of missing)')
+    
+    # Drop temporary column
+    df = df.drop(columns=['st_teff_estimated'], errors='ignore')
+    
+    return df
+
+def impute_missing_equilibrium_temperature(df):
+    """Estimate missing equilibrium temperatures from stellar and orbital parameters"""
+    initial_count = len(df)
+    missing_temp = df['pl_eqt'].isna().sum()
+    
+    if missing_temp == 0:
+        logging.info('No missing equilibrium temperatures to impute')
+        return df
+    
+    logging.info(f'Attempting to estimate {missing_temp} missing equilibrium temperatures...')
+    
+    # Calculate estimated temperatures for missing values
+    mask_missing = df['pl_eqt'].isna()
+    df.loc[mask_missing, 'pl_eqt_estimated'] = df[mask_missing].apply(estimate_equilibrium_temperature, axis=1)
+    
+    # Fill missing pl_eqt with estimated values where available
+    estimated_count = df.loc[mask_missing, 'pl_eqt_estimated'].notna().sum()
+    df.loc[mask_missing & df['pl_eqt_estimated'].notna(), 'pl_eqt'] = df.loc[mask_missing & df['pl_eqt_estimated'].notna(), 'pl_eqt_estimated']
+    
+    if estimated_count > 0:
+        logging.info(f'Successfully estimated {estimated_count} equilibrium temperatures ({estimated_count/missing_temp*100:.1f}% of missing)')
+    
+    # Drop the temporary estimation column
+    df = df.drop(columns=['pl_eqt_estimated'], errors='ignore')
+    
+    return df
+
 def remove_outliers_equilibrium_temperature(df):
     """Remove outliers based on equilibrium temperature"""
     initial_count = len(df)
     
-    # Remove rows with missing temperature
+    # Remove rows with missing temperature (after imputation attempt)
     df_with_temp = df.dropna(subset=['pl_eqt'])
     removed_missing = initial_count - len(df_with_temp)
     
     if removed_missing > 0:
-        logging.info(f'Removed {removed_missing} entries with missing equilibrium temperature')
+        logging.info(f'Removed {removed_missing} entries with missing equilibrium temperature (after imputation)')
     
     if len(df_with_temp) == 0:
         return df_with_temp
     
-    # Remove unrealistic temperature values (too cold or too hot)
-    temp_mask = (df_with_temp['pl_eqt'] >= 100) & (df_with_temp['pl_eqt'] <= 5000)
+    # Remove unrealistic temperature values (relaxed thresholds)
+    # 50K = extremely cold rogue planets, 5000K = upper limit for stable atmospheres
+    temp_mask = (df_with_temp['pl_eqt'] >= 50) & (df_with_temp['pl_eqt'] <= 5000)
     df_clean = df_with_temp[temp_mask]
     
     removed_outliers = len(df_with_temp) - len(df_clean)
@@ -150,15 +279,47 @@ def clean_stellar_parameters(df):
     return df
 
 def remove_duplicates(df):
-    """Remove duplicate entries based on planet name"""
+    """
+    Handle duplicate planet entries intelligently.
+    For planets with multiple measurements, keep the entry with the most complete data.
+    If tied, keep the one with the most precise measurements (fewest NaNs overall).
+    """
     initial_count = len(df)
     
-    # Remove duplicates based on planet name, keeping the first occurrence
-    df_clean = df.drop_duplicates(subset=['pl_name'], keep='first')
+    # Check for duplicates
+    duplicate_names = df[df.duplicated(subset=['pl_name'], keep=False)]['pl_name'].unique()
+    
+    if len(duplicate_names) == 0:
+        logging.info('No duplicate planet names found')
+        return df
+    
+    logging.info(f'Found {len(duplicate_names)} planets with multiple entries')
+    
+    # For duplicates, keep the best entry
+    rows_to_keep = []
+    
+    for planet_name in duplicate_names:
+        planet_rows = df[df['pl_name'] == planet_name].copy()
+        
+        # Score each row by completeness (fewer NaNs = better)
+        planet_rows['completeness_score'] = planet_rows.isna().sum(axis=1)
+        
+        # Keep the row with best completeness (lowest score)
+        best_row_idx = planet_rows['completeness_score'].idxmin()
+        rows_to_keep.append(best_row_idx)
+    
+    # Get non-duplicate rows
+    non_duplicate_rows = df[~df['pl_name'].isin(duplicate_names)]
+    
+    # Combine: non-duplicates + best of duplicates
+    df_clean = pd.concat([
+        non_duplicate_rows,
+        df.loc[rows_to_keep]
+    ]).drop(columns=['completeness_score'], errors='ignore')
     
     removed_count = initial_count - len(df_clean)
     if removed_count > 0:
-        logging.info(f'Removed {removed_count} duplicate entries ({removed_count/initial_count*100:.1f}%)')
+        logging.info(f'Consolidated {len(duplicate_names)} planets with multiple measurements, removed {removed_count} redundant entries ({removed_count/initial_count*100:.1f}%)')
     
     return df_clean
 
@@ -239,13 +400,19 @@ def main():
         # Step 3: Remove planet radius outliers
         df_cleaned = remove_outliers_planet_radius(df_cleaned)
         
-        # Step 4: Remove equilibrium temperature outliers
+        # Step 4: Estimate missing stellar parameters (new!)
+        df_cleaned = impute_missing_stellar_parameters(df_cleaned)
+        
+        # Step 5: Estimate missing equilibrium temperatures (new!)
+        df_cleaned = impute_missing_equilibrium_temperature(df_cleaned)
+        
+        # Step 6: Remove equilibrium temperature outliers
         df_cleaned = remove_outliers_equilibrium_temperature(df_cleaned)
         
-        # Step 5: Clean stellar parameters
+        # Step 7: Clean stellar parameters
         df_cleaned = clean_stellar_parameters(df_cleaned)
         
-        # Step 6: Remove duplicates
+        # Step 8: Remove duplicates
         df_cleaned = remove_duplicates(df_cleaned)
         
         # Generate quality report
