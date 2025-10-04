@@ -37,11 +37,11 @@ def find_toi_data_file():
 
     # Possible file locations in order of preference
     possible_locations = [
-        # Current cleaned datasets location
-        backend_root / 'cleaned_datasets' / 'toi_cleaned.csv',
-        
-        # New data acquisition locations
+        # Primary location - new datasets directory
         backend_root / 'datasets' / 'toi.csv',
+        
+        # Fallback locations
+        backend_root / 'cleaned_datasets' / 'toi_cleaned.csv',
         backend_root / 'data' / 'raw' / 'tess_toi_raw.csv',
 
         # Legacy locations
