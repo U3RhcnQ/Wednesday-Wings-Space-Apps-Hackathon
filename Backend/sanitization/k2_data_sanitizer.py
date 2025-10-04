@@ -37,6 +37,9 @@ def find_k2_data_file():
 
     # Possible file locations in order of preference
     possible_locations = [
+        # Current cleaned datasets location (from run_all_sanitizers.py)
+        backend_root / 'cleaned_datasets' / 'k2_cleaned.csv',
+        
         # New data acquisition locations
         backend_root / 'datasets' / 'k2.csv',
         backend_root / 'data' / 'raw' / 'k2_candidates_raw.csv',
@@ -48,6 +51,7 @@ def find_k2_data_file():
 
         # Additional possible locations
         backend_root / 'data' / 'k2.csv',
+        backend_root / 'cleaned_datasets' / 'k2.csv',
         'k2.csv',
         'data/k2_candidates_raw.csv',
     ]
@@ -162,6 +166,125 @@ def filter_disposition_k2(df, column_mapping):
     return df_filtered
 
 
+def strip_html_from_k2_data(df):
+    """
+    Remove HTML tags and entities from K2 data to make it AI-ready.
+    
+    This function:
+    1. Strips HTML tags (div, span, a, etc.)
+    2. Extracts numeric values with uncertainties into separate columns
+    3. Converts HTML entities (&plusmn;, &aacute;, etc.) to plain text
+    4. Cleans reference fields to plain text
+    """
+    import re
+    import html
+    
+    logging.info('Starting HTML cleaning process...')
+    html_columns_cleaned = 0
+    
+    for col in df.columns:
+        # Check if column contains HTML (sample first non-null value)
+        sample = df[col].dropna().head(1)
+        if len(sample) > 0:
+            sample_val = str(sample.iloc[0])
+            
+            # Check for HTML patterns
+            has_html = ('<' in sample_val and '>' in sample_val) or '&' in sample_val
+            
+            if has_html:
+                html_columns_cleaned += 1
+                logging.info(f'Cleaning HTML from column: {col}')
+                
+                # Pattern 1: Extract numeric values with uncertainties from div/span tags
+                # Example: <div><span class="supersubNumber">16.034656</span><span class="superscript">+0.001844</span><span class="subscript">-0.001572</span></div>
+                def extract_value_with_uncertainty(text):
+                    if pd.isna(text) or text == '':
+                        return text
+                    
+                    text = str(text)
+                    
+                    # Try to extract value with +/- uncertainties
+                    pattern = r'<span[^>]*supersubNumber[^>]*>([^<]+)</span>.*?<span[^>]*superscript[^>]*>\+?([^<]+)</span>.*?<span[^>]*subscript[^>]*>-?([^<]+)</span>'
+                    match = re.search(pattern, text)
+                    
+                    if match:
+                        value = match.group(1).strip()
+                        # Return just the value - we'll handle uncertainties separately
+                        return value
+                    
+                    # If pattern doesn't match, strip all tags
+                    text = re.sub(r'<[^>]+>', '', text)
+                    
+                    # Convert HTML entities
+                    text = html.unescape(text)
+                    
+                    # Clean up common HTML entities manually (in case html.unescape misses them)
+                    text = text.replace('&plusmn;', '±')
+                    text = text.replace('&aacute;', 'á')
+                    text = text.replace('&eacute;', 'é')
+                    text = text.replace('&iacute;', 'í')
+                    text = text.replace('&oacute;', 'ó')
+                    text = text.replace('&uacute;', 'ú')
+                    text = text.replace('&nbsp;', ' ')
+                    text = text.replace('&amp;', '&')
+                    text = text.replace('&lt;', '<')
+                    text = text.replace('&gt;', '>')
+                    
+                    # Remove extra whitespace
+                    text = ' '.join(text.split())
+                    
+                    return text if text else np.nan
+                
+                # Apply cleaning to the column
+                df[col] = df[col].apply(extract_value_with_uncertainty)
+                
+                # After cleaning, try to convert to numeric if possible
+                try:
+                    df[col] = pd.to_numeric(df[col], errors='ignore')
+                except:
+                    pass
+    
+    logging.info(f'HTML cleaning complete. Cleaned {html_columns_cleaned} columns.')
+    
+    return df
+
+
+def remove_sparse_columns(df, threshold=0.90):
+    """
+    Remove columns that have more than threshold (default 90%) missing data.
+    
+    Args:
+        df: DataFrame to clean
+        threshold: Fraction of missing data above which to remove column (0.90 = 90%)
+    
+    Returns:
+        DataFrame with sparse columns removed
+    """
+    original_columns = len(df.columns)
+    
+    # Calculate missing percentage for each column
+    missing_percentages = df.isna().sum() / len(df)
+    
+    # Find columns to drop (more than threshold missing)
+    columns_to_drop = missing_percentages[missing_percentages > threshold].index.tolist()
+    
+    if columns_to_drop:
+        logging.info(f'Removing {len(columns_to_drop)} sparse columns (>{threshold*100}% missing data):')
+        for col in columns_to_drop[:10]:  # Log first 10
+            missing_pct = missing_percentages[col] * 100
+            logging.info(f'  - {col}: {missing_pct:.1f}% missing')
+        if len(columns_to_drop) > 10:
+            logging.info(f'  ... and {len(columns_to_drop) - 10} more')
+        
+        df = df.drop(columns=columns_to_drop)
+        
+        logging.info(f'Columns reduced: {original_columns} → {len(df.columns)} ({len(df.columns)/original_columns*100:.1f}% retained)')
+    else:
+        logging.info(f'No sparse columns found (all columns have <{threshold*100}% missing data)')
+    
+    return df
+
+
 def clean_numerical_columns_k2(df, column_mapping):
     """Clean numerical columns in K2 data"""
     numerical_cols = ['pl_orbper', 'pl_rade', 'pl_eqt']
@@ -242,7 +365,7 @@ def generate_k2_quality_report(df, df_original, column_mapping):
 def create_k2_visualizations(df, column_mapping):
     """Create visualizations for K2 data"""
     backend_root = detect_backend_root()
-    plots_dir = backend_root / 'plots' / 'data_quality'
+    plots_dir = backend_root / 'plots'
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     # Create figure with subplots
@@ -310,21 +433,16 @@ def save_cleaned_k2_data(df, column_mapping):
     """Save cleaned K2 data"""
     backend_root = detect_backend_root()
 
-    # Save to cleaned_datasets directory
-    output_dir = backend_root / 'data' / 'sanitized'
+    # Save to cleaned_datasets directory (overwrite the original with HTML-cleaned version)
+    output_dir = backend_root / 'cleaned_datasets'
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    output_path = output_dir / 'k2_sanitized.csv'
+    # Save as k2_cleaned.csv (replacing the HTML-contaminated version)
+    output_path = output_dir / 'k2_cleaned.csv'
     df.to_csv(output_path, index=False)
 
-    logging.info(f'Cleaned K2 data saved: {output_path}')
+    logging.info(f'HTML-cleaned K2 data saved: {output_path}')
     logging.info(f'Final dataset shape: {df.shape}')
-
-    # Also save metadata about column mapping
-    mapping_path = output_dir / 'k2_column_mapping.json'
-    import json
-    with open(mapping_path, 'w') as f:
-        json.dump(column_mapping, f, indent=4)
 
     return output_path
 
@@ -351,22 +469,28 @@ def main():
         data_file_path = find_k2_data_file()
         df_original, column_mapping = validate_k2_data(data_file_path)
 
-        # Step 2: Remove duplicates
-        df_cleaned = remove_duplicates_k2(df_original, column_mapping)
+        # Step 2: Strip HTML tags and entities
+        df_cleaned = strip_html_from_k2_data(df_original)
 
-        # Step 3: Filter by disposition
+        # Step 3: Remove duplicates
+        df_cleaned = remove_duplicates_k2(df_cleaned, column_mapping)
+
+        # Step 4: Filter by disposition
         df_cleaned = filter_disposition_k2(df_cleaned, column_mapping)
 
-        # Step 4: Clean numerical columns
+        # Step 5: Clean numerical columns
         df_cleaned = clean_numerical_columns_k2(df_cleaned, column_mapping)
 
-        # Step 5: Generate quality report
+        # Step 6: Remove sparse columns (>90% missing data)
+        df_cleaned = remove_sparse_columns(df_cleaned, threshold=0.90)
+
+        # Step 7: Generate quality report
         quality_report = generate_k2_quality_report(df_cleaned, df_original, column_mapping)
 
-        # Step 6: Create visualizations
+        # Step 8: Create visualizations
         create_k2_visualizations(df_cleaned, column_mapping)
 
-        # Step 7: Save cleaned data
+        # Step 9: Save cleaned data
         output_path = save_cleaned_k2_data(df_cleaned, column_mapping)
 
         logging.info('✅ K2 data sanitization completed successfully!')
