@@ -76,8 +76,6 @@ def get_project_paths():
 
 def create_directory_structure(paths):
     """Create all directories in the project structure"""
-    print("🏗️  Creating robust directory structure...")
-    
     created_dirs = []
     failed_dirs = []
     
@@ -89,13 +87,11 @@ def create_directory_structure(paths):
             failed_dirs.append((name, path, str(e)))
     
     print(f"✅ Created {len(created_dirs)} directories")
-    for name, path in created_dirs:
-        print(f"   📁 {name}: {path}")
     
     if failed_dirs:
-        print(f"❌ Failed to create {len(failed_dirs)} directories:")
+        print(f"❌ Failed: {len(failed_dirs)} directories")
         for name, path, error in failed_dirs:
-            print(f"   ❌ {name}: {path} - {error}")
+            print(f"   {name}: {error}")
     
     return len(failed_dirs) == 0
 
@@ -168,31 +164,26 @@ def create_init_files(paths):
             init_file = paths[dir_name] / '__init__.py'
             if not init_file.exists():
                 with open(init_file, 'w') as f:
-                    f.write(f'# {dir_name.title()} package\\n# NASA Space Apps Challenge 2025\\n')
+                    f.write(f'# {dir_name.title()} package\n# NASA Space Apps Challenge 2025\n')
                 print(f"📄 Created: {init_file}")
 
 def main():
     """Set up the complete robust project structure"""
-    print("=" * 80)
-    print("🏗️  ROBUST PROJECT STRUCTURE SETUP")
-    print("NASA Space Apps Challenge 2025")
-    print("=" * 80)
+    print("🏗️  Project Setup")
     
     # Get all paths
     paths = get_project_paths()
-    
-    print(f"\\n📍 Project root: {paths['project_root']}")
-    print(f"📍 Backend root: {paths['backend_root']}")
     
     # Create directory structure
     success = create_directory_structure(paths)
     
     if not success:
-        print("\\n⚠️  Some directories failed to create. Check permissions.")
+        print("⚠️  Some directories failed. Check permissions.")
         return False
     
     # Create path configuration file
     config_path = create_path_config_file(paths)
+    print(f"✅ Config: {config_path}")
     
     # Create __init__.py files
     create_init_files(paths)
@@ -204,17 +195,6 @@ def main():
             gitkeep = paths[dir_name] / '.gitkeep'
             if not gitkeep.exists():
                 gitkeep.touch()
-    
-    print("\\n" + "=" * 80)
-    print("✅ ROBUST PROJECT STRUCTURE CREATED!")
-    print("=" * 80)
-    print(f"📁 Total directories: {len(paths)}")
-    print(f"⚙️  Configuration: {config_path}")
-    print("\\n🎯 Next Steps:")
-    print("1. All scripts will now use unified path management")
-    print("2. Run the updated pipeline from backend/ml_pipeline/")
-    print("3. All data will be properly organized")
-    print("=" * 80)
     
     return True
 
