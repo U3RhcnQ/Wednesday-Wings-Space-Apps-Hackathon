@@ -323,12 +323,19 @@ def save_cleaned_koi_data(df, column_mapping):
     """Save cleaned KOI data"""
     backend_root = detect_backend_root()
 
-    # Save to cleaned_datasets directory
-    output_dir = backend_root / 'cleaned_datasets'
+    # Save to data/sanitized directory
+    output_dir = backend_root / 'data' / 'sanitized'
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    output_path = output_dir / 'koi_cleaned.csv'
+    # Save CSV as koi_sanitized.csv
+    output_path = output_dir / 'koi_sanitized.csv'
     df.to_csv(output_path, index=False)
+
+    # Save column mapping as JSON
+    import json
+    mapping_path = output_dir / 'koi_column_mapping.json'
+    with open(mapping_path, 'w') as f:
+        json.dump(column_mapping, f, indent=2)
 
     logging.info(f'Cleaned KOI data saved: {output_path}')
     logging.info(f'Final dataset shape: {df.shape}')
