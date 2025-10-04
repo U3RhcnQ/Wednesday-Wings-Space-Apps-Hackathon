@@ -1,5 +1,8 @@
 import { useState, useRef, DragEvent, ChangeEvent } from 'react';
 
+// API Configuration
+const API_BASE_URL = 'http://localhost:8000';
+
 interface UploadedFile {
   file: File;
   id: string;
@@ -49,38 +52,73 @@ export default function UploadPage() {
     setUploadedFiles(prev => [...prev, ...newFiles]);
   };
 
-  const simulateUpload = (fileId: string) => {
+  const uploadToAPI = async (fileId: string) => {
+    const fileObj = uploadedFiles.find(f => f.id === fileId);
+    if (!fileObj) return;
+
+    // Set uploading status
     setUploadedFiles(prev => 
-      prev.map(f => f.id === fileId ? { ...f, status: 'uploading' as const } : f)
+      prev.map(f => f.id === fileId ? { ...f, status: 'uploading' as const, progress: 0 } : f)
     );
 
-    // Simulate upload progress
-    const interval = setInterval(() => {
-      setUploadedFiles(prev => {
-        const file = prev.find(f => f.id === fileId);
-        if (!file || file.status !== 'uploading') {
-          clearInterval(interval);
-          return prev;
-        }
+    try {
+      const formData = new FormData();
+      formData.append('file', fileObj.file);
 
-        const newProgress = Math.min(file.progress + Math.random() * 20, 100);
-        
-        if (newProgress >= 100) {
-          clearInterval(interval);
-          return prev.map(f => 
-            f.id === fileId 
-              ? { ...f, status: 'success' as const, progress: 100 }
-              : f
+      // Create XMLHttpRequest to track upload progress
+      const xhr = new XMLHttpRequest();
+
+      // Track upload progress
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const progress = (e.loaded / e.total) * 100;
+          setUploadedFiles(prev => 
+            prev.map(f => f.id === fileId ? { ...f, progress } : f)
           );
         }
+      });
 
-        return prev.map(f => 
-          f.id === fileId 
-            ? { ...f, progress: newProgress }
-            : f
+      // Handle completion
+      xhr.addEventListener('load', () => {
+        if (xhr.status === 200) {
+          setUploadedFiles(prev => 
+            prev.map(f => f.id === fileId ? { ...f, status: 'success' as const, progress: 100 } : f)
+          );
+        } else {
+          setUploadedFiles(prev => 
+            prev.map(f => f.id === fileId ? { 
+              ...f, 
+              status: 'error' as const, 
+              errorMessage: `Upload failed: ${xhr.statusText}` 
+            } : f)
+          );
+        }
+      });
+
+      // Handle errors
+      xhr.addEventListener('error', () => {
+        setUploadedFiles(prev => 
+          prev.map(f => f.id === fileId ? { 
+            ...f, 
+            status: 'error' as const, 
+            errorMessage: 'Network error during upload' 
+          } : f)
         );
       });
-    }, 200);
+
+      // Send request to FastAPI backend
+      xhr.open('POST', `${API_BASE_URL}/upload`);
+      xhr.send(formData);
+
+    } catch (error) {
+      setUploadedFiles(prev => 
+        prev.map(f => f.id === fileId ? { 
+          ...f, 
+          status: 'error' as const, 
+          errorMessage: `Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}` 
+        } : f)
+      );
+    }
   };
 
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
@@ -113,7 +151,7 @@ export default function UploadPage() {
   };
 
   const uploadFile = (fileId: string) => {
-    simulateUpload(fileId);
+    uploadToAPI(fileId);
   };
 
   const formatFileSize = (bytes: number): string => {
