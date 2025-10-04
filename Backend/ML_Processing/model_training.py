@@ -179,8 +179,17 @@ def load_and_prepare_data():
     print(f"Features shape: {X.shape}")
     print(f"Number of features: {len(feature_cols)}")
     
-    # Handle any remaining NaNs
-    X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+    # Validate and handle any remaining NaNs/Infs
+    print("\nData validation:")
+    nan_count = np.isnan(X).sum()
+    inf_count = np.isinf(X).sum()
+    print(f"  NaN values: {nan_count}")
+    print(f"  Inf values: {inf_count}")
+    
+    if nan_count > 0 or inf_count > 0:
+        print("  Cleaning data...")
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        print("  ✓ Data cleaned")
     
     # Stratified split
     X_temp, X_test, y_temp, y_test = train_test_split(
@@ -492,16 +501,25 @@ class ExoplanetTrainer:
         
         # Predictions
         y_pred_proba = self.model.predict(self.X_test, batch_size=Config.BATCH_SIZE)
-        y_pred = (y_pred_proba > 0.5).astype(int).flatten()
         y_pred_proba = y_pred_proba.flatten()
+        
+        # Handle NaN predictions (replace with 0.5 - uncertain)
+        nan_mask = np.isnan(y_pred_proba)
+        if nan_mask.any():
+            print(f"⚠️  Warning: {nan_mask.sum()} NaN predictions detected, replacing with 0.5")
+            y_pred_proba = np.nan_to_num(y_pred_proba, nan=0.5)
+        
+        # Clip predictions to valid range [0, 1]
+        y_pred_proba = np.clip(y_pred_proba, 0.0, 1.0)
+        y_pred = (y_pred_proba > 0.5).astype(int)
         
         # Metrics
         metrics = {
             'accuracy': accuracy_score(self.y_test, y_pred),
             'auc': roc_auc_score(self.y_test, y_pred_proba),
-            'precision': precision_score(self.y_test, y_pred),
-            'recall': recall_score(self.y_test, y_pred),
-            'f1_score': f1_score(self.y_test, y_pred)
+            'precision': precision_score(self.y_test, y_pred, zero_division=0),
+            'recall': recall_score(self.y_test, y_pred, zero_division=0),
+            'f1_score': f1_score(self.y_test, y_pred, zero_division=0)
         }
         
         print("Test Set Performance:")
