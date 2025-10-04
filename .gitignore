@@ -77,3 +77,18 @@ Backend/plots/*
 !Backend/plots/.gitkeep
 Backend/logs/*
 !Backend/logs/.gitkeep
+
+# Frontend / Node.js
+Frontend/node_modules/
+Frontend/dist/
+Frontend/dist-ssr/
+Frontend/.vite/
+Frontend/*.local
+Frontend/npm-debug.log*
+Frontend/yarn-debug.log*
+Frontend/yarn-error.log*
+Frontend/pnpm-debug.log*
+Frontend/lerna-debug.log*
+
+# Old my-app folder (if it still exists)
+Frontend/my-app/
