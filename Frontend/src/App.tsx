@@ -6,6 +6,7 @@ import KOIDataPage from './components/pages/KOIDataPage';
 import K2DataPage from './components/pages/K2DataPage';
 import TOIDataPage from './components/pages/TOIDataPage';
 import UploadPage from './components/pages/UploadPage';
+import ModelPage from './components/pages/ModelPage';
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
           <Route path="/library/k2" element={<K2DataPage />} />
           <Route path="/library/toi" element={<TOIDataPage />} />
           <Route path="/upload" element={<UploadPage />} />
+          <Route path="/model" element={<ModelPage />} />
         </Routes>
       </Layout>
     </Router>

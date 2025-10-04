@@ -101,6 +101,16 @@ export default function Layout({ children }: LayoutProps) {
               >
                 Upload Module
               </Link>
+              <Link
+                to="/model"
+                className={`px-6 py-2 rounded-lg transition-all font-medium ${
+                  location.pathname === '/model' 
+                    ? 'nasa-button text-white' 
+                    : 'hover:bg-white/10 text-gray-300 border border-transparent hover:border-white/20'
+                }`}
+              >
+                AI Models
+              </Link>
             </div>
           </div>
         </div>

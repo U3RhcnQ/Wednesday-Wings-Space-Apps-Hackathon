@@ -7,8 +7,25 @@ NASA Space Apps Challenge 2025
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from typing import List
+from typing import List, Dict, Any
+from pydantic import BaseModel
 import uvicorn
+import time
+import random
+
+# Pydantic models for request/response
+class ModelConfig(BaseModel):
+    algorithm: str
+    hyperparameters: Dict[str, Any]
+
+class TrainingResult(BaseModel):
+    status: str
+    accuracy: float = None
+    precision: float = None
+    recall: float = None
+    f1_score: float = None
+    training_time: str = None
+    message: str = None
 import os
 from pathlib import Path
 import shutil
@@ -119,6 +136,95 @@ async def upload_multiple_files(files: List[UploadFile] = File(...)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@app.post("/train", response_model=TrainingResult)
+async def train_model(config: ModelConfig):
+    """
+    Model training endpoint - accepts model configuration and returns training results
+    This is a template endpoint that simulates model training
+    """
+    try:
+        # Simulate training time based on algorithm
+        training_times = {
+            "random_forest": random.uniform(2, 5),
+            "xgboost": random.uniform(3, 8),
+            "svm": random.uniform(1, 3)
+        }
+        
+        training_time = training_times.get(config.algorithm, 3.0)
+        
+        # Simulate training process (in real implementation, this would train actual models)
+        time.sleep(min(training_time, 0.5))  # Shortened for demo
+        
+        # Generate realistic performance metrics based on algorithm
+        base_accuracy = {
+            "random_forest": 0.87,
+            "xgboost": 0.89,
+            "svm": 0.85
+        }.get(config.algorithm, 0.85)
+        
+        # Add some randomness to metrics
+        accuracy = base_accuracy + random.uniform(-0.05, 0.05)
+        precision = accuracy + random.uniform(-0.03, 0.03)
+        recall = accuracy + random.uniform(-0.04, 0.02)
+        f1_score = 2 * (precision * recall) / (precision + recall)
+        
+        return TrainingResult(
+            status="success",
+            accuracy=round(accuracy, 3),
+            precision=round(precision, 3),
+            recall=round(recall, 3),
+            f1_score=round(f1_score, 3),
+            training_time=f"{training_time:.1f}s"
+        )
+        
+    except Exception as e:
+        return TrainingResult(
+            status="error",
+            message=f"Training failed: {str(e)}"
+        )
+
+@app.get("/models")
+async def get_available_models():
+    """
+    Get available model algorithms and their default configurations
+    """
+    return {
+        "algorithms": [
+            {
+                "name": "random_forest",
+                "display_name": "Random Forest",
+                "description": "Ensemble method using multiple decision trees",
+                "default_params": {
+                    "n_estimators": 100,
+                    "max_depth": 10,
+                    "min_samples_split": 2,
+                    "bootstrap": True
+                }
+            },
+            {
+                "name": "xgboost",
+                "display_name": "XGBoost",
+                "description": "Gradient boosting framework",
+                "default_params": {
+                    "n_estimators": 100,
+                    "max_depth": 6,
+                    "learning_rate": 0.1,
+                    "subsample": 1.0
+                }
+            },
+            {
+                "name": "svm",
+                "display_name": "Support Vector Machine",
+                "description": "Support Vector Machine classifier",
+                "default_params": {
+                    "C": 1.0,
+                    "kernel": "rbf",
+                    "gamma": "scale"
+                }
+            }
+        ]
+    }
 
 @app.get("/files")
 async def list_all_files():
