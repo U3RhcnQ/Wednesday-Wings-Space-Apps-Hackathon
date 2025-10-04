@@ -156,18 +156,25 @@ def load_and_prepare_data():
     if not data_path.exists():
         raise FileNotFoundError(f"❌ Processed data file not found: {data_path}")
     
-    df = pd.read_csv(data_path)
+    df = pd.read_csv(data_path, low_memory=False)
     
     print(f"Dataset shape: {df.shape}")
     print(f"Target distribution:\n{df['target'].value_counts()}")
     
     # Separate features and target
     exclude_cols = ['target', 'object_id', 'candidate_name', 'dataset_source', 
-                   'original_row_count', 'disposition']
-    feature_cols = [col for col in df.columns if col not in exclude_cols]
+                   'original_row_count', 'disposition', 'confidence_score']
     
-    X = df[feature_cols].values
-    y = df['target'].values
+    # Get only numeric columns for features
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    feature_cols = [col for col in numeric_cols if col not in exclude_cols]
+    
+    print(f"Total columns: {len(df.columns)}")
+    print(f"Numeric columns: {len(numeric_cols)}")
+    print(f"Feature columns after filtering: {len(feature_cols)}")
+    
+    X = df[feature_cols].values.astype(np.float32)
+    y = df['target'].values.astype(np.float32)
     
     print(f"Features shape: {X.shape}")
     print(f"Number of features: {len(feature_cols)}")
