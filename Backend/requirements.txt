@@ -29,3 +29,8 @@ GPUtil>=1.4.0
 # Additional packages for enhanced functionality
 jupyter>=1.0.0  # For interactive development
 ipykernel>=6.0.0  # Jupyter kernel support
+
+# Web Server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6  # For file uploads
