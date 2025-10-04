@@ -1,8 +1,6 @@
-#!/usr/bin/env python3
-"""
-TOI Dataset Sanitization Script
-Based on lightCurveProcessingTest.py principles but adapted for TOI exoplanet data
-"""
+# Updated TOI Data Sanitizer with Robust Path Detection
+# NASA Space Apps Challenge 2025
+# Automatically finds data files in the new directory structure
 
 import numpy as np
 import pandas as pd
@@ -10,352 +8,392 @@ import matplotlib.pyplot as plt
 import logging
 import os
 from pathlib import Path
+from datetime import datetime
 import warnings
+
 warnings.filterwarnings('ignore')
+
+
+def detect_backend_root():
+    """Detect the backend root directory from current location"""
+    current_path = Path(__file__).resolve()
+
+    # Look for backend directory in parents
+    for parent in current_path.parents:
+        if parent.name.lower() in ['backend', 'Backend']:
+            return parent
+        # Check if parent contains backend subdirectory
+        for subdir in ['backend', 'Backend']:
+            if (parent / subdir).exists():
+                return parent / subdir
+
+    # Fallback: assume we're in backend/sanitization/
+    return current_path.parent.parent if current_path.parent.name == 'sanitization' else current_path.parent
+
+
+def find_toi_data_file():
+    """Find TOI data file in various possible locations"""
+    backend_root = detect_backend_root()
+
+    # Possible file locations in order of preference
+    possible_locations = [
+        # New data acquisition locations
+        backend_root / 'datasets' / 'toi.csv',
+        backend_root / 'data' / 'raw' / 'tess_toi_raw.csv',
+
+        # Legacy locations
+        'data/raw/tess_toi_raw.csv',
+        'Backend/data/raw/tess_toi_raw.csv',
+        '/data/raw/tess_toi_raw.csv',
+
+        # Additional possible locations
+        backend_root / 'data' / 'toi.csv',
+        'toi.csv',
+        'data/tess_toi_raw.csv',
+    ]
+
+    for location in possible_locations:
+        file_path = Path(location)
+        if file_path.exists():
+            logging.info(f'Found TOI data file: {file_path}')
+            return str(file_path)
+
+    # List available files for debugging
+    logging.error("TOI data file not found in any expected location!")
+    logging.error("Searched locations:")
+    for location in possible_locations:
+        logging.error(f"  - {location} (exists: {Path(location).exists()})")
+
+    # Show what files are actually available
+    for search_dir in [backend_root / 'datasets', backend_root / 'data', Path('data')]:
+        if search_dir.exists():
+            logging.error(f"Files in {search_dir}:")
+            for file in search_dir.glob('*.csv'):
+                logging.error(f"  - {file}")
+
+    raise FileNotFoundError('TOI data file not found in any expected location')
+
 
 def validate_toi_data(file_path):
     """Validate TOI dataset file and required columns"""
     if not os.path.exists(file_path):
         raise FileNotFoundError(f'TOI data file not found: {file_path}')
-    
+
     try:
         df = pd.read_csv(file_path)
     except Exception as e:
         raise ValueError(f'Error reading TOI CSV file: {e}')
-    
-    # Check for essential TOI columns
-    essential_columns = ['tid', 'toi', 'tfopwg_disp', 'pl_orbper', 'pl_rade', 'pl_eqt']
-    missing_columns = [col for col in essential_columns if col not in df.columns]
-    if missing_columns:
-        raise ValueError(f'Missing essential TOI columns: {missing_columns}')
-    
+
+    # Check for essential TOI columns - be flexible with column names
+    essential_columns_variants = {
+        'toi': ['toi', 'TIC', 'tic_id'],
+        'tfopwg_disp': ['tfopwg_disp', 'disposition', 'toi_disposition'],
+        'pl_orbper': ['pl_orbper', 'period', 'orbital_period'],
+        'pl_rade': ['pl_rade', 'radius', 'planet_radius'],
+        'pl_eqt': ['pl_eqt', 'equilibrium_temp', 'temperature'],
+        'pl_insol': ['pl_insol', 'insolation'],
+        'st_teff': ['st_teff', 'stellar_temp', 'teff'],
+        'st_rad': ['st_rad', 'stellar_radius'],
+        'st_mass': ['st_mass', 'stellar_mass']
+    }
+
+    found_columns = {}
+    missing_essential = []
+
+    for essential, variants in essential_columns_variants.items():
+        found = False
+        for variant in variants:
+            if variant in df.columns:
+                found_columns[essential] = variant
+                found = True
+                break
+
+        if not found:
+            missing_essential.append(essential)
+
+    if missing_essential:
+        logging.warning(f'Some essential TOI columns not found: {missing_essential}')
+        logging.info(f'Available columns: {list(df.columns)[:15]}...')
+        # Continue anyway - we'll work with what we have
+
     logging.info(f'Loaded {len(df)} TOI data points from {file_path}')
+    logging.info(f'Found columns: {found_columns}')
+
+    return df, found_columns
+
+
+def remove_duplicates_toi(df, column_mapping):
+    """Remove duplicate TOI entries"""
+    original_count = len(df)
+
+    # Use TOI ID for deduplication if available
+    if 'toi' in column_mapping and column_mapping['toi'] in df.columns:
+        toi_col = column_mapping['toi']
+        df = df.drop_duplicates(subset=[toi_col])
+
+    duplicates_removed = original_count - len(df)
+    if duplicates_removed > 0:
+        logging.info(f'Removed {duplicates_removed} duplicate entries')
+
     return df
 
-def remove_invalid_dispositions(df):
-    """Remove entries with invalid or missing dispositions"""
-    initial_count = len(df)
-    
-    # Keep only confirmed planets and candidates (TESS-specific disposition codes)
-    valid_dispositions = ['KP', 'CP', 'PC', 'APC']  # Kepler Planet, Confirmed Planet, Planet Candidate, Ambiguous Planet Candidate
-    df_clean = df[df['tfopwg_disp'].isin(valid_dispositions)]
-    
-    removed_count = initial_count - len(df_clean)
-    logging.info(f'Removed {removed_count} entries with invalid dispositions ({removed_count/initial_count*100:.1f}%)')
-    
-    return df_clean
 
-def remove_outliers_orbital_period(df, sigma=4):
-    """Remove outliers based on orbital period (in days)"""
-    if sigma <= 0:
-        raise ValueError('Sigma must be positive')
-    
-    initial_count = len(df)
-    
-    # Remove rows with missing orbital period
-    df_with_period = df.dropna(subset=['pl_orbper'])
-    removed_missing = initial_count - len(df_with_period)
-    
-    if removed_missing > 0:
-        logging.info(f'Removed {removed_missing} entries with missing orbital period')
-    
-    if len(df_with_period) == 0:
-        logging.warning('No data remaining after removing missing orbital periods')
-        return df_with_period
-    
-    # Remove extreme outliers (very short or very long periods)
-    period_mask = (df_with_period['pl_orbper'] >= 0.1) & (df_with_period['pl_orbper'] <= 10000)
-    df_clean = df_with_period[period_mask]
-    
-    removed_outliers = len(df_with_period) - len(df_clean)
-    logging.info(f'Removed {removed_outliers} orbital period outliers ({removed_outliers/len(df_with_period)*100:.1f}%)')
-    
-    return df_clean
+def filter_disposition_toi(df, column_mapping):
+    """Filter TOI data based on disposition"""
+    if 'tfopwg_disp' not in column_mapping:
+        logging.warning('No disposition column found - skipping disposition filtering')
+        return df
 
-def remove_outliers_planet_radius(df, sigma=3):
-    """Remove outliers based on planet radius (in Earth radii)"""
-    initial_count = len(df)
-    
-    # Remove rows with missing radius
-    df_with_radius = df.dropna(subset=['pl_rade'])
-    removed_missing = initial_count - len(df_with_radius)
-    
-    if removed_missing > 0:
-        logging.info(f'Removed {removed_missing} entries with missing planet radius')
-    
-    if len(df_with_radius) == 0:
-        return df_with_radius
-    
-    # Remove unrealistic radius values (too small or too large)
-    radius_mask = (df_with_radius['pl_rade'] >= 0.1) & (df_with_radius['pl_rade'] <= 50)
-    df_clean = df_with_radius[radius_mask]
-    
-    removed_outliers = len(df_with_radius) - len(df_clean)
-    logging.info(f'Removed {removed_outliers} radius outliers ({removed_outliers/len(df_with_radius)*100:.1f}%)')
-    
-    return df_clean
+    disp_col = column_mapping['tfopwg_disp']
+    original_count = len(df)
 
-def remove_outliers_equilibrium_temperature(df):
-    """Remove outliers based on equilibrium temperature"""
-    initial_count = len(df)
-    
-    # Remove rows with missing temperature
-    df_with_temp = df.dropna(subset=['pl_eqt'])
-    removed_missing = initial_count - len(df_with_temp)
-    
-    if removed_missing > 0:
-        logging.info(f'Removed {removed_missing} entries with missing equilibrium temperature')
-    
-    if len(df_with_temp) == 0:
-        return df_with_temp
-    
-    # Remove unrealistic temperature values (too cold or too hot)
-    temp_mask = (df_with_temp['pl_eqt'] >= 100) & (df_with_temp['pl_eqt'] <= 5000)
-    df_clean = df_with_temp[temp_mask]
-    
-    removed_outliers = len(df_with_temp) - len(df_clean)
-    logging.info(f'Removed {removed_outliers} temperature outliers ({removed_outliers/len(df_with_temp)*100:.1f}%)')
-    
-    return df_clean
+    # Analyze current disposition values
+    disposition_counts = df[disp_col].value_counts()
+    logging.info(f'Original disposition distribution:')
+    for disp, count in disposition_counts.items():
+        logging.info(f'  {disp}: {count}')
 
-def clean_stellar_parameters(df):
-    """Clean and validate stellar parameters"""
-    initial_count = len(df)
-    
-    # Clean stellar effective temperature
-    if 'st_teff' in df.columns:
-        temp_mask = (df['st_teff'] >= 2000) & (df['st_teff'] <= 10000)
-        df = df[temp_mask]
-        removed_temp = initial_count - len(df)
-        if removed_temp > 0:
-            logging.info(f'Removed {removed_temp} entries with invalid stellar temperature')
-    
-    # Clean stellar radius
-    if 'st_rad' in df.columns:
-        initial_count = len(df)
-        radius_mask = (df['st_rad'] >= 0.1) & (df['st_rad'] <= 100)
-        df = df[radius_mask]
-        removed_radius = initial_count - len(df)
-        if removed_radius > 0:
-            logging.info(f'Removed {removed_radius} entries with invalid stellar radius')
-    
+    # Filter for confirmed planets and candidates
+    valid_dispositions = df[disp_col].astype(str).str.upper()
+    valid_mask = valid_dispositions.str.contains('CP|CONFIRMED|CANDIDATE|PC', na=False)
+
+    df_filtered = df[valid_mask].copy()
+
+    filtered_count = len(df_filtered)
+    logging.info(
+        f'Filtered TOI data: {original_count} → {filtered_count} ({filtered_count / original_count * 100:.1f}% retained)')
+
+    return df_filtered
+
+
+def clean_numerical_columns_toi(df, column_mapping):
+    """Clean numerical columns in TOI data"""
+    numerical_cols = ['pl_orbper', 'pl_rade', 'pl_eqt', 'pl_insol', 'st_teff', 'st_rad', 'st_mass']
+
+    for col_key in numerical_cols:
+        if col_key in column_mapping:
+            actual_col = column_mapping[col_key]
+            if actual_col in df.columns:
+                # Convert to numeric, replacing invalid values with NaN
+                df[actual_col] = pd.to_numeric(df[actual_col], errors='coerce')
+
+                # Apply reasonable range filters
+                if col_key == 'pl_orbper':  # Orbital period in days
+                    df[actual_col] = df[actual_col].where((df[actual_col] > 0) & (df[actual_col] < 10000))
+                elif col_key == 'pl_rade':  # Planet radius in Earth radii
+                    df[actual_col] = df[actual_col].where((df[actual_col] > 0) & (df[actual_col] < 50))
+                elif col_key == 'pl_eqt':  # Equilibrium temperature in K
+                    df[actual_col] = df[actual_col].where((df[actual_col] > 0) & (df[actual_col] < 5000))
+                elif col_key == 'pl_insol':  # Insolation flux
+                    df[actual_col] = df[actual_col].where((df[actual_col] > 0) & (df[actual_col] < 10000))
+                elif col_key == 'st_teff':  # Stellar temperature in K
+                    df[actual_col] = df[actual_col].where((df[actual_col] > 2000) & (df[actual_col] < 10000))
+                elif col_key == 'st_rad':  # Stellar radius in solar radii
+                    df[actual_col] = df[actual_col].where((df[actual_col] > 0) & (df[actual_col] < 100))
+                elif col_key == 'st_mass':  # Stellar mass in solar masses
+                    df[actual_col] = df[actual_col].where((df[actual_col] > 0) & (df[actual_col] < 10))
+
+                # Report cleaning results
+                valid_count = df[actual_col].count()
+                total_count = len(df)
+                logging.info(
+                    f'Cleaned {actual_col}: {valid_count}/{total_count} valid values ({valid_count / total_count * 100:.1f}%)')
+
     return df
 
-def clean_tess_specific_parameters(df):
-    """Clean TESS-specific parameters"""
-    initial_count = len(df)
-    
-    # Clean TESS magnitude
-    if 'st_tmag' in df.columns:
-        tmag_mask = (df['st_tmag'] >= 5) & (df['st_tmag'] <= 20)
-        df = df[tmag_mask]
-        removed_tmag = initial_count - len(df)
-        if removed_tmag > 0:
-            logging.info(f'Removed {removed_tmag} entries with invalid TESS magnitude')
-    
-    # Clean transit duration (in hours) - only if not missing
-    if 'pl_trandurh' in df.columns:
-        initial_count = len(df)
-        # Only filter if we have actual duration values
-        has_duration = df['pl_trandurh'].notna()
-        duration_mask = ~has_duration | ((df['pl_trandurh'] >= 0.1) & (df['pl_trandurh'] <= 100))
-        df = df[duration_mask]
-        removed_duration = initial_count - len(df)
-        if removed_duration > 0:
-            logging.info(f'Removed {removed_duration} entries with invalid transit duration')
-    
-    # Clean transit depth - only if not missing and reasonable (values are in ppm)
-    if 'pl_trandep' in df.columns:
-        initial_count = len(df)
-        # Only filter if we have actual depth values and they're reasonable (1-100,000 ppm)
-        has_depth = df['pl_trandep'].notna()
-        depth_mask = ~has_depth | ((df['pl_trandep'] >= 1) & (df['pl_trandep'] <= 100000))
-        df = df[depth_mask]
-        removed_depth = initial_count - len(df)
-        if removed_depth > 0:
-            logging.info(f'Removed {removed_depth} entries with invalid transit depth')
-    
-    return df
 
-def clean_insolation_flux(df):
-    """Clean insolation flux values"""
-    initial_count = len(df)
-    
-    if 'pl_insol' in df.columns:
-        # Remove unrealistic insolation values
-        insol_mask = (df['pl_insol'] >= 0) & (df['pl_insol'] <= 10000)
-        df = df[insol_mask]
-        removed_insol = initial_count - len(df)
-        if removed_insol > 0:
-            logging.info(f'Removed {removed_insol} entries with invalid insolation flux')
-    
-    return df
+def generate_toi_quality_report(df, df_original, column_mapping):
+    """Generate quality report for TOI data"""
+    backend_root = detect_backend_root()
 
-def remove_duplicates(df):
-    """Remove duplicate entries based on TOI identifier"""
-    initial_count = len(df)
-    
-    # Remove duplicates based on TOI, keeping the first occurrence
-    df_clean = df.drop_duplicates(subset=['toi'], keep='first')
-    
-    removed_count = initial_count - len(df_clean)
-    if removed_count > 0:
-        logging.info(f'Removed {removed_count} duplicate entries ({removed_count/initial_count*100:.1f}%)')
-    
-    return df_clean
+    report = {
+        'processing_timestamp': datetime.now().isoformat(),
+        'original_records': len(df_original),
+        'final_records': len(df),
+        'records_retained_pct': (len(df) / len(df_original)) * 100,
+        'column_mapping': column_mapping,
+        'columns_total': len(df.columns),
+        'missing_value_summary': {}
+    }
 
-def generate_quality_report(df_original, df_cleaned):
-    """Generate a quality report comparing original and cleaned data"""
-    logging.info("=" * 50)
-    logging.info("TOI DATA SANITIZATION REPORT")
-    logging.info("=" * 50)
-    logging.info(f"Original dataset: {len(df_original)} entries")
-    logging.info(f"Cleaned dataset: {len(df_cleaned)} entries")
-    logging.info(f"Removed: {len(df_original) - len(df_cleaned)} entries ({((len(df_original) - len(df_cleaned))/len(df_original)*100):.1f}%)")
-    
-    # Disposition breakdown
-    if 'tfopwg_disp' in df_cleaned.columns:
-        logging.info("\nDisposition breakdown:")
-        disposition_counts = df_cleaned['tfopwg_disp'].value_counts()
-        for disp, count in disposition_counts.items():
-            logging.info(f"  {disp}: {count} ({count/len(df_cleaned)*100:.1f}%)")
-    
-    # Key parameter statistics
-    if 'pl_orbper' in df_cleaned.columns:
-        logging.info(f"\nOrbital period range: {df_cleaned['pl_orbper'].min():.3f} - {df_cleaned['pl_orbper'].max():.3f} days")
-    
-    if 'pl_rade' in df_cleaned.columns:
-        logging.info(f"Planet radius range: {df_cleaned['pl_rade'].min():.3f} - {df_cleaned['pl_rade'].max():.3f} Earth radii")
-    
-    if 'pl_eqt' in df_cleaned.columns:
-        logging.info(f"Equilibrium temperature range: {df_cleaned['pl_eqt'].min():.1f} - {df_cleaned['pl_eqt'].max():.1f} K")
-    
-    # TESS-specific statistics
-    if 'st_tmag' in df_cleaned.columns:
-        logging.info(f"TESS magnitude range: {df_cleaned['st_tmag'].min():.2f} - {df_cleaned['st_tmag'].max():.2f}")
+    # Missing value analysis
+    for col_key, actual_col in column_mapping.items():
+        if actual_col in df.columns:
+            missing_count = df[actual_col].isna().sum()
+            missing_pct = (missing_count / len(df)) * 100
+            report['missing_value_summary'][col_key] = {
+                'column_name': actual_col,
+                'missing_count': int(missing_count),
+                'missing_percentage': float(missing_pct)
+            }
 
-def create_summary_plots(df_cleaned, output_dir='plots'):
-    """Create summary plots of the cleaned data"""
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Check if we have any data to plot
-    if len(df_cleaned) == 0:
-        logging.warning("No data to plot - skipping plot generation")
-        return
-    
-    # Plot 1: Orbital period distribution
-    if 'pl_orbper' in df_cleaned.columns and df_cleaned['pl_orbper'].notna().any():
-        plt.figure(figsize=(10, 6))
-        valid_periods = df_cleaned['pl_orbper'].dropna()
+    # Disposition analysis
+    if 'tfopwg_disp' in column_mapping and column_mapping['tfopwg_disp'] in df.columns:
+        disp_col = column_mapping['tfopwg_disp']
+        disposition_dist = df[disp_col].value_counts().to_dict()
+        report['disposition_distribution'] = disposition_dist
+
+    # Save quality report
+    reports_dir = backend_root / 'metadata'
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    report_path = reports_dir / 'toi_quality_report.json'
+    import json
+    with open(report_path, 'w') as f:
+        json.dump(report, f, indent=4, default=str)
+
+    logging.info(f'Quality report saved: {report_path}')
+    logging.info(f'Data quality summary:')
+    logging.info(
+        f'  Records: {report["original_records"]} → {report["final_records"]} ({report["records_retained_pct"]:.1f}% retained)')
+    logging.info(f'  Columns mapped: {len(column_mapping)}')
+
+    return report
+
+
+def create_toi_visualizations(df, column_mapping):
+    """Create visualizations for TOI data"""
+    backend_root = detect_backend_root()
+    plots_dir = backend_root / 'plots' / 'data_quality'
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create figure with subplots
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+    fig.suptitle('TOI Dataset Quality Analysis', fontsize=16, fontweight='bold')
+
+    # 1. Disposition distribution
+    if 'tfopwg_disp' in column_mapping and column_mapping['tfopwg_disp'] in df.columns:
+        disp_col = column_mapping['tfopwg_disp']
+        disp_counts = df[disp_col].value_counts()
+        axes[0, 0].bar(range(len(disp_counts)), disp_counts.values)
+        axes[0, 0].set_title('Disposition Distribution')
+        axes[0, 0].set_xlabel('Disposition Type')
+        axes[0, 0].set_ylabel('Count')
+        axes[0, 0].set_xticks(range(len(disp_counts)))
+        axes[0, 0].set_xticklabels(disp_counts.index, rotation=45, ha='right')
+
+    # 2. Planet radius distribution
+    if 'pl_rade' in column_mapping and column_mapping['pl_rade'] in df.columns:
+        radius_col = column_mapping['pl_rade']
+        valid_radii = df[radius_col].dropna()
+        if len(valid_radii) > 0:
+            axes[0, 1].hist(valid_radii, bins=30, alpha=0.7, edgecolor='black')
+            axes[0, 1].set_title('Planet Radius Distribution')
+            axes[0, 1].set_xlabel('Planet Radius (Earth Radii)')
+            axes[0, 1].set_ylabel('Count')
+
+    # 3. Orbital period distribution
+    if 'pl_orbper' in column_mapping and column_mapping['pl_orbper'] in df.columns:
+        period_col = column_mapping['pl_orbper']
+        valid_periods = df[period_col].dropna()
         if len(valid_periods) > 0:
-            plt.hist(valid_periods, bins=50, alpha=0.7, edgecolor='black')
-            plt.xlabel('Orbital Period (days)')
-            plt.ylabel('Count')
-            plt.title('TOI Planet Orbital Period Distribution')
-            plt.yscale('log')
-            plt.tight_layout()
-            plt.savefig(f'{output_dir}/toi_orbital_period_dist.png', dpi=300, bbox_inches='tight')
-            plt.close()
-    
-    # Plot 2: Planet radius vs orbital period
-    if ('pl_orbper' in df_cleaned.columns and 'pl_rade' in df_cleaned.columns and 
-        df_cleaned['pl_orbper'].notna().any() and df_cleaned['pl_rade'].notna().any()):
-        plt.figure(figsize=(10, 8))
-        valid_data = df_cleaned.dropna(subset=['pl_orbper', 'pl_rade'])
-        if len(valid_data) > 0:
-            scatter = plt.scatter(valid_data['pl_orbper'], valid_data['pl_rade'], 
-                                c=valid_data['pl_eqt'] if 'pl_eqt' in valid_data.columns and valid_data['pl_eqt'].notna().any() else 'blue',
-                                alpha=0.6, s=20)
-            plt.xlabel('Orbital Period (days)')
-            plt.ylabel('Planet Radius (Earth radii)')
-            plt.title('TOI Planet Radius vs Orbital Period')
-            plt.xscale('log')
-            plt.yscale('log')
-            if 'pl_eqt' in valid_data.columns and valid_data['pl_eqt'].notna().any():
-                cbar = plt.colorbar(scatter)
-                cbar.set_label('Equilibrium Temperature (K)')
-            plt.tight_layout()
-            plt.savefig(f'{output_dir}/toi_radius_vs_period.png', dpi=300, bbox_inches='tight')
-            plt.close()
-    
-    # Plot 3: Transit duration vs orbital period
-    if ('pl_orbper' in df_cleaned.columns and 'pl_trandurh' in df_cleaned.columns and
-        df_cleaned['pl_orbper'].notna().any() and df_cleaned['pl_trandurh'].notna().any()):
-        plt.figure(figsize=(10, 6))
-        valid_data = df_cleaned.dropna(subset=['pl_orbper', 'pl_trandurh'])
-        if len(valid_data) > 0:
-            plt.scatter(valid_data['pl_orbper'], valid_data['pl_trandurh'], alpha=0.6, s=20)
-            plt.xlabel('Orbital Period (days)')
-            plt.ylabel('Transit Duration (hours)')
-            plt.title('TOI Transit Duration vs Orbital Period')
-            plt.xscale('log')
-            plt.yscale('log')
-            plt.tight_layout()
-            plt.savefig(f'{output_dir}/toi_duration_vs_period.png', dpi=300, bbox_inches='tight')
-            plt.close()
-    
-    # Plot 4: TESS magnitude distribution
-    if 'st_tmag' in df_cleaned.columns and df_cleaned['st_tmag'].notna().any():
-        plt.figure(figsize=(10, 6))
-        valid_mags = df_cleaned['st_tmag'].dropna()
-        if len(valid_mags) > 0:
-            plt.hist(valid_mags, bins=30, alpha=0.7, edgecolor='black')
-            plt.xlabel('TESS Magnitude')
-            plt.ylabel('Count')
-            plt.title('TOI TESS Magnitude Distribution')
-            plt.tight_layout()
-            plt.savefig(f'{output_dir}/toi_tmag_dist.png', dpi=300, bbox_inches='tight')
-            plt.close()
+            axes[1, 0].hist(np.log10(valid_periods), bins=30, alpha=0.7, edgecolor='black')
+            axes[1, 0].set_title('Orbital Period Distribution (log scale)')
+            axes[1, 0].set_xlabel('Log10(Orbital Period [days])')
+            axes[1, 0].set_ylabel('Count')
+
+    # 4. Missing values heatmap
+    missing_data = []
+    missing_labels = []
+    for col_key, actual_col in column_mapping.items():
+        if actual_col in df.columns:
+            missing_pct = (df[actual_col].isna().sum() / len(df)) * 100
+            missing_data.append(missing_pct)
+            missing_labels.append(col_key)
+
+    if missing_data:
+        axes[1, 1].bar(range(len(missing_data)), missing_data)
+        axes[1, 1].set_title('Missing Values by Column')
+        axes[1, 1].set_xlabel('Column')
+        axes[1, 1].set_ylabel('Missing Percentage')
+        axes[1, 1].set_xticks(range(len(missing_labels)))
+        axes[1, 1].set_xticklabels(missing_labels, rotation=45, ha='right')
+
+    plt.tight_layout()
+
+    plot_path = plots_dir / 'toi_data_quality_analysis.png'
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+    logging.info(f'Visualization saved: {plot_path}')
+
+
+def save_cleaned_toi_data(df, column_mapping):
+    """Save cleaned TOI data"""
+    backend_root = detect_backend_root()
+
+    # Save to cleaned_datasets directory
+    output_dir = backend_root / 'data' / 'sanitized'
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    output_path = output_dir / 'toi_sanitized.csv'
+    df.to_csv(output_path, index=False)
+
+    logging.info(f'Cleaned TOI data saved: {output_path}')
+    logging.info(f'Final dataset shape: {df.shape}')
+
+    # Also save metadata about column mapping
+    mapping_path = output_dir / 'toi_column_mapping.json'
+    import json
+    with open(mapping_path, 'w') as f:
+        json.dump(column_mapping, f, indent=4)
+
+    return output_path
+
 
 def main():
-    # Set up logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    
+    """Main TOI data sanitization function with robust path detection"""
+    # Setup logging
+    log_dir = Path('logs')
+    log_dir.mkdir(exist_ok=True)
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_dir / f'toi_sanitization_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
+            logging.StreamHandler()
+        ]
+    )
+
+    logging.info('Starting TOI data sanitization with robust path detection...')
+
     try:
-        # Load and validate TOI data
-        df_original = validate_toi_data('Backend/datasets/toi.csv')
-        
-        # Step 1: Remove invalid dispositions
-        df_cleaned = remove_invalid_dispositions(df_original)
-        
-        # Step 2: Remove orbital period outliers
-        df_cleaned = remove_outliers_orbital_period(df_cleaned)
-        
-        # Step 3: Remove planet radius outliers
-        df_cleaned = remove_outliers_planet_radius(df_cleaned)
-        
-        # Step 4: Remove equilibrium temperature outliers
-        df_cleaned = remove_outliers_equilibrium_temperature(df_cleaned)
-        
-        # Step 5: Clean stellar parameters
-        df_cleaned = clean_stellar_parameters(df_cleaned)
-        
-        # Step 6: Clean TESS-specific parameters
-        df_cleaned = clean_tess_specific_parameters(df_cleaned)
-        
-        # Step 7: Clean insolation flux
-        df_cleaned = clean_insolation_flux(df_cleaned)
-        
-        # Step 8: Remove duplicates
-        df_cleaned = remove_duplicates(df_cleaned)
-        
-        # Generate quality report
-        generate_quality_report(df_original, df_cleaned)
-        
-        # Save cleaned data
-        output_file = 'Backend/cleaned_datasets/toi_cleaned.csv'
-        df_cleaned.to_csv(output_file, index=False)
-        logging.info(f"Cleaned TOI data saved to: {output_file}")
-        
-        # Create summary plots
-        create_summary_plots(df_cleaned, 'Backend/plots')
-        logging.info("Summary plots saved to '../plots/' directory")
-        
-        return df_cleaned
-        
+        # Step 1: Find and validate data
+        data_file_path = find_toi_data_file()
+        df_original, column_mapping = validate_toi_data(data_file_path)
+
+        # Step 2: Remove duplicates
+        df_cleaned = remove_duplicates_toi(df_original, column_mapping)
+
+        # Step 3: Filter by disposition
+        df_cleaned = filter_disposition_toi(df_cleaned, column_mapping)
+
+        # Step 4: Clean numerical columns
+        df_cleaned = clean_numerical_columns_toi(df_cleaned, column_mapping)
+
+        # Step 5: Generate quality report
+        quality_report = generate_toi_quality_report(df_cleaned, df_original, column_mapping)
+
+        # Step 6: Create visualizations
+        create_toi_visualizations(df_cleaned, column_mapping)
+
+        # Step 7: Save cleaned data
+        output_path = save_cleaned_toi_data(df_cleaned, column_mapping)
+
+        logging.info('✅ TOI data sanitization completed successfully!')
+        logging.info(f'Input: {len(df_original)} records → Output: {len(df_cleaned)} records')
+        logging.info(f'Cleaned data available at: {output_path}')
+
+        return True
+
     except Exception as e:
-        logging.error(f'Error in TOI data sanitization: {e}')
-        raise
+        logging.error(f'❌ TOI data sanitization failed: {e}')
+        import traceback
+        logging.error(traceback.format_exc())
+        return False
+
 
 if __name__ == "__main__":
-    main()
+    success = main()
+    exit(0 if success else 1)

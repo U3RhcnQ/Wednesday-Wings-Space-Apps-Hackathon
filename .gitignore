@@ -71,12 +71,12 @@ Thumbs.db
 *_log_*.txt
 
 # Cleaned datasets (keep folders, ignore contents)
-Backend/cleaned_datasets/*
-!Backend/cleaned_datasets/.gitkeep
-Backend/plots/*
-!Backend/plots/.gitkeep
-Backend/logs/*
-!Backend/logs/.gitkeep
+Backend-old/cleaned_datasets/*
+!Backend-old/cleaned_datasets/.gitkeep
+Backend-old/plots/*
+!Backend-old/plots/.gitkeep
+Backend-old/logs/*
+!Backend-old/logs/.gitkeep
 
 # Frontend / Node.js
 Frontend/node_modules/

@@ -144,7 +144,7 @@ class ExoplanetPipelineOrchestratorMonorepo:
     
     def run_stage_monorepo(self, stage_name, script_name, description, working_dir=None):
         """Run pipeline stage with monorepo path management"""
-        print(f"\\n{'='*70}")
+        print(f"\n{'='*70}")
         print(f"🏃 STAGE: {stage_name}")
         print(f"📝 {description}")
         print(f"🗂️  Working dir: {working_dir or self.paths['ml_pipeline']}")
