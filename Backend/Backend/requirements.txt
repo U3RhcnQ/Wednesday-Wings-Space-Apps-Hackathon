@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+pytest
+from fastapi import FastAPI
+from .routers import k2, koi, toi
+
+app = FastAPI()
+
+app.include_router(k2.router)
+app.include_router(koi.router)
+app.include_router(toi.router)
+
+@app.get("/")
+async def root():
+    return {"message": "Welcome to the Exoplanet API"}
+
