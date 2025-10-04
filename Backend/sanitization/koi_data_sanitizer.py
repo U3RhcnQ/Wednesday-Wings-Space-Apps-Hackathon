@@ -37,11 +37,11 @@ def find_koi_data_file():
 
     # Possible file locations in order of preference
     possible_locations = [
-        # Current cleaned datasets location
-        backend_root / 'cleaned_datasets' / 'koi_cleaned.csv',
-        
-        # New data acquisition locations
+        # Primary location - new datasets directory
         backend_root / 'datasets' / 'koi.csv',
+        
+        # Fallback locations
+        backend_root / 'cleaned_datasets' / 'koi_cleaned.csv',
         backend_root / 'data' / 'raw' / 'kepler_koi_raw.csv',
 
         # Legacy locations
