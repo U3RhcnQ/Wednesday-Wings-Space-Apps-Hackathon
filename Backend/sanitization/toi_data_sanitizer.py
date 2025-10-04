@@ -206,6 +206,42 @@ def clean_numerical_columns_toi(df, column_mapping):
     return df
 
 
+def remove_sparse_columns(df, threshold=0.90):
+    """
+    Remove columns that have more than threshold (default 90%) missing data.
+    
+    Args:
+        df: DataFrame to clean
+        threshold: Fraction of missing data above which to remove column (0.90 = 90%)
+    
+    Returns:
+        DataFrame with sparse columns removed
+    """
+    original_columns = len(df.columns)
+    
+    # Calculate missing percentage for each column
+    missing_percentages = df.isna().sum() / len(df)
+    
+    # Find columns to drop (more than threshold missing)
+    columns_to_drop = missing_percentages[missing_percentages > threshold].index.tolist()
+    
+    if columns_to_drop:
+        logging.info(f'Removing {len(columns_to_drop)} sparse columns (>{threshold*100}% missing data):')
+        for col in columns_to_drop[:10]:  # Log first 10
+            missing_pct = missing_percentages[col] * 100
+            logging.info(f'  - {col}: {missing_pct:.1f}% missing')
+        if len(columns_to_drop) > 10:
+            logging.info(f'  ... and {len(columns_to_drop) - 10} more')
+        
+        df = df.drop(columns=columns_to_drop)
+        
+        logging.info(f'Columns reduced: {original_columns} → {len(df.columns)} ({len(df.columns)/original_columns*100:.1f}% retained)')
+    else:
+        logging.info(f'No sparse columns found (all columns have <{threshold*100}% missing data)')
+    
+    return df
+
+
 def generate_toi_quality_report(df, df_original, column_mapping):
     """Generate quality report for TOI data"""
     backend_root = detect_backend_root()
@@ -370,13 +406,16 @@ def main():
         # Step 4: Clean numerical columns
         df_cleaned = clean_numerical_columns_toi(df_cleaned, column_mapping)
 
-        # Step 5: Generate quality report
+        # Step 5: Remove sparse columns (>90% missing data)
+        df_cleaned = remove_sparse_columns(df_cleaned, threshold=0.90)
+
+        # Step 6: Generate quality report
         quality_report = generate_toi_quality_report(df_cleaned, df_original, column_mapping)
 
-        # Step 6: Create visualizations
+        # Step 7: Create visualizations
         create_toi_visualizations(df_cleaned, column_mapping)
 
-        # Step 7: Save cleaned data
+        # Step 8: Save cleaned data
         output_path = save_cleaned_toi_data(df_cleaned, column_mapping)
 
         logging.info('✅ TOI data sanitization completed successfully!')
