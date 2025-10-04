@@ -147,9 +147,9 @@ def check_output_files():
     backend_root = detect_backend_root()
 
     all_outputs  = [
-        backend_root / 'data' / 'sanitized' / 'k2_sanitized.csv',
-        backend_root / 'data' / 'sanitized' / 'koi_sanitized.csv',
-        backend_root / 'data' / 'sanitized' / 'toi_sanitized.csv'
+        backend_root / 'cleaned_datasets' / 'k2_cleaned.csv',
+        backend_root / 'cleaned_datasets' / 'koi_cleaned.csv',
+        backend_root / 'cleaned_datasets' / 'toi_cleaned.csv'
     ]
 
     logging.info('Checking for output files:')
@@ -164,20 +164,13 @@ def check_output_files():
             logging.info(f'  ✗ {output_file} (not found)')
 
     # Check for plots directory
-    plots_dirs = [
-        backend_root / 'plots',
-        Path('Backend-old/plots/'),
-        Path('plots/')
-    ]
-
-    for plots_dir in plots_dirs:
-        if plots_dir.exists():
-            plot_files = list(plots_dir.glob('**/*.png'))
-            if plot_files:
-                logging.info(f'  ✓ {plots_dir} directory ({len(plot_files)} plot files)')
-                break
+    plots_dir = backend_root / 'plots'
+    if plots_dir.exists():
+        plot_files = list(plots_dir.glob('*.png'))
+        if plot_files:
+            logging.info(f'  ✓ {plots_dir} directory ({len(plot_files)} plot files)')
     else:
-        logging.info('  ✗ Backend-old/plots/ directory (not found)')
+        logging.info(f'  ✗ {plots_dir} directory (not found)')
 
     return len(found_files) > 0
 

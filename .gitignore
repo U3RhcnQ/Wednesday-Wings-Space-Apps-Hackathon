@@ -99,3 +99,5 @@ Backend/logs/*
 !Backend/logs/.gitkeep
 Backend/cleaned_datasets/*
 !Backend/cleaned_datasets/.gitkeep
+Backend/metadata/*
+!Backend/metadata/.gitkeep
