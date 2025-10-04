@@ -92,3 +92,10 @@ Frontend/lerna-debug.log*
 
 # Old my-app folder (if it still exists)
 Frontend/my-app/
+
+Backend/plots/*
+!Backend/plots/.gitkeep
+Backend/logs/*
+!Backend/logs/.gitkeep
+Backend/cleaned_datasets/*
+!Backend/cleaned_datasets/.gitkeep
