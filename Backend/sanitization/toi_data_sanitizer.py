@@ -37,6 +37,9 @@ def find_toi_data_file():
 
     # Possible file locations in order of preference
     possible_locations = [
+        # Current cleaned datasets location
+        backend_root / 'cleaned_datasets' / 'toi_cleaned.csv',
+        
         # New data acquisition locations
         backend_root / 'datasets' / 'toi.csv',
         backend_root / 'data' / 'raw' / 'tess_toi_raw.csv',
@@ -48,6 +51,7 @@ def find_toi_data_file():
 
         # Additional possible locations
         backend_root / 'data' / 'toi.csv',
+        backend_root / 'cleaned_datasets' / 'toi.csv',
         'toi.csv',
         'data/tess_toi_raw.csv',
     ]
@@ -202,6 +206,42 @@ def clean_numerical_columns_toi(df, column_mapping):
     return df
 
 
+def remove_sparse_columns(df, threshold=0.90):
+    """
+    Remove columns that have more than threshold (default 90%) missing data.
+    
+    Args:
+        df: DataFrame to clean
+        threshold: Fraction of missing data above which to remove column (0.90 = 90%)
+    
+    Returns:
+        DataFrame with sparse columns removed
+    """
+    original_columns = len(df.columns)
+    
+    # Calculate missing percentage for each column
+    missing_percentages = df.isna().sum() / len(df)
+    
+    # Find columns to drop (more than threshold missing)
+    columns_to_drop = missing_percentages[missing_percentages > threshold].index.tolist()
+    
+    if columns_to_drop:
+        logging.info(f'Removing {len(columns_to_drop)} sparse columns (>{threshold*100}% missing data):')
+        for col in columns_to_drop[:10]:  # Log first 10
+            missing_pct = missing_percentages[col] * 100
+            logging.info(f'  - {col}: {missing_pct:.1f}% missing')
+        if len(columns_to_drop) > 10:
+            logging.info(f'  ... and {len(columns_to_drop) - 10} more')
+        
+        df = df.drop(columns=columns_to_drop)
+        
+        logging.info(f'Columns reduced: {original_columns} → {len(df.columns)} ({len(df.columns)/original_columns*100:.1f}% retained)')
+    else:
+        logging.info(f'No sparse columns found (all columns have <{threshold*100}% missing data)')
+    
+    return df
+
+
 def generate_toi_quality_report(df, df_original, column_mapping):
     """Generate quality report for TOI data"""
     backend_root = detect_backend_root()
@@ -322,21 +362,22 @@ def save_cleaned_toi_data(df, column_mapping):
     """Save cleaned TOI data"""
     backend_root = detect_backend_root()
 
-    # Save to cleaned_datasets directory
+    # Save to data/sanitized directory
     output_dir = backend_root / 'data' / 'sanitized'
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Save CSV as toi_sanitized.csv
     output_path = output_dir / 'toi_sanitized.csv'
     df.to_csv(output_path, index=False)
 
+    # Save column mapping as JSON
+    import json
+    mapping_path = output_dir / 'toi_column_mapping.json'
+    with open(mapping_path, 'w') as f:
+        json.dump(column_mapping, f, indent=2)
+
     logging.info(f'Cleaned TOI data saved: {output_path}')
     logging.info(f'Final dataset shape: {df.shape}')
-
-    # Also save metadata about column mapping
-    mapping_path = output_dir / 'toi_column_mapping.json'
-    import json
-    with open(mapping_path, 'w') as f:
-        json.dump(column_mapping, f, indent=4)
 
     return output_path
 
@@ -372,13 +413,16 @@ def main():
         # Step 4: Clean numerical columns
         df_cleaned = clean_numerical_columns_toi(df_cleaned, column_mapping)
 
-        # Step 5: Generate quality report
+        # Step 5: Remove sparse columns (>90% missing data)
+        df_cleaned = remove_sparse_columns(df_cleaned, threshold=0.90)
+
+        # Step 6: Generate quality report
         quality_report = generate_toi_quality_report(df_cleaned, df_original, column_mapping)
 
-        # Step 6: Create visualizations
+        # Step 7: Create visualizations
         create_toi_visualizations(df_cleaned, column_mapping)
 
-        # Step 7: Save cleaned data
+        # Step 8: Save cleaned data
         output_path = save_cleaned_toi_data(df_cleaned, column_mapping)
 
         logging.info('✅ TOI data sanitization completed successfully!')

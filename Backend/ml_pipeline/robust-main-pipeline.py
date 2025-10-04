@@ -79,8 +79,6 @@ class RobustPipelineOrchestrator:
         print(f"Paths Configured: {'✅ YES' if self.paths_configured else '⚠️  FALLBACK'}")
         print(f"Start Time: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print("=" * 80)
-        
-        self.log("Robust pipeline orchestrator initialized")
     
     def log(self, message, level="INFO"):
         """Log messages to file and console"""
@@ -89,7 +87,7 @@ class RobustPipelineOrchestrator:
         
         try:
             with open(self.log_file, 'a') as f:
-                f.write(log_entry + '\\n')
+                f.write(log_entry + '\n')
         except:
             pass
 
@@ -114,8 +112,6 @@ class RobustPipelineOrchestrator:
 
     def run_stage(self, stage_name, script_name, description, working_dir=None, required=True):
         """Run a pipeline stage with robust error handling"""
-        self.log(f"Starting stage: {stage_name}")
-
         stage_start = datetime.now()
 
         # Find the script
@@ -162,30 +158,39 @@ class RobustPipelineOrchestrator:
             work_dir = script_path.parent
 
         print(f"\n{'='*70}")
-        print(f"🏃 STAGE: {stage_name}")
-        print(f"📝 {description}")
-        print(f"📜 Script: {script_path}")
-        print(f"📁 Working Dir: {work_dir}")
+        print(f"🏃 {stage_name}")
         print(f"{'='*70}")
+        print()  # Add space before subprocess output
 
         try:
-            # Run the script
-            self.log(f"Executing: python {script_path}")
-
-            result = subprocess.run(
+            # Run the script with live output streaming and indentation
+            process = subprocess.Popen(
                 [sys.executable, str(script_path)],
-                capture_output=True,
-                text=True,
                 cwd=str(work_dir),
                 env=env,
-                timeout=3600  # 1 hour timeout
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,  # Line buffered
+                universal_newlines=True
             )
+
+            # Stream output in real-time with indentation
+            for line in process.stdout:
+                print(f"   {line}", end='')
+            
+            # Wait for process to complete
+            process.wait(timeout=3600)
+            
+            print()  # Add space after subprocess output
 
             stage_end = datetime.now()
             stage_duration = (stage_end - stage_start).total_seconds()
+            
+            result_returncode = process.returncode
 
             # Process results
-            if result.returncode == 0:
+            if result_returncode == 0:
                 # Success
                 stage_info = {
                     'stage_name': stage_name,
@@ -195,33 +200,13 @@ class RobustPipelineOrchestrator:
                     'end_time': stage_end.isoformat(),
                     'duration_seconds': stage_duration,
                     'status': 'SUCCESS',
-                    'return_code': result.returncode
+                    'return_code': result_returncode
                 }
 
                 self.metadata['stages_completed'].append(stage_info)
                 self.metadata['stage_timings'][stage_name] = stage_duration
 
-                print(f"✅ {stage_name} completed successfully!")
-                print(f"⏱️  Duration: {stage_duration:.1f} seconds ({stage_duration/60:.1f} minutes)")
-
-                # Show key outputs
-                if result.stdout:
-                    # Look for important output lines
-                    output_lines = result.stdout.strip().split('\\n')
-                    important_lines = [
-                        line for line in output_lines[-15:]  # Last 15 lines
-                        if any(keyword in line.lower() for keyword in [
-                            'completed', 'success', 'saved', 'total', 'features', '✅', 'ready'
-                        ])
-                    ]
-
-                    if important_lines:
-                        print("\\n📄 Key outputs:")
-                        for line in important_lines[:5]:  # Show max 5 lines
-                            if line.strip():
-                                print(f"   {line}")
-
-                self.log(f"Stage {stage_name} completed successfully")
+                print(f"✅ {stage_name} completed in {stage_duration:.1f}s")
                 return True
 
             else:
@@ -234,65 +219,41 @@ class RobustPipelineOrchestrator:
                     'end_time': stage_end.isoformat(),
                     'duration_seconds': stage_duration,
                     'status': 'FAILED',
-                    'return_code': result.returncode,
-                    'stdout': result.stdout[-1000:] if result.stdout else '',
-                    'stderr': result.stderr[-1000:] if result.stderr else ''
+                    'return_code': result_returncode
                 }
 
                 self.metadata['stages_completed'].append(stage_info)
 
-                print(f"❌ {stage_name} FAILED!")
-                print(f"⏱️  Duration before failure: {stage_duration:.1f} seconds")
-                print(f"🔍 Return code: {result.returncode}")
-
-                # Show error output
-                if result.stderr:
-                    print("\\n📄 Error output (last 10 lines):")
-                    error_lines = result.stderr.strip().split('\\n')[-10:]
-                    for line in error_lines:
-                        if line.strip():
-                            print(f"   {line}")
+                print(f"❌ {stage_name} FAILED (code: {result_returncode})")
 
                 error_info = {
                     'stage': stage_name,
-                    'error': f"Script failed with return code {result.returncode}",
-                    'stderr': result.stderr[-500:] if result.stderr else '',
+                    'error': f"Script failed with return code {result_returncode}",
                     'timestamp': datetime.now().isoformat()
                 }
                 self.metadata['errors'].append(error_info)
 
-                self.log(f"Stage {stage_name} failed", "ERROR")
-
                 if required:
                     return False
                 else:
-                    self.log(f"Continuing despite optional stage failure", "WARNING")
                     return True
 
         except subprocess.TimeoutExpired:
-            print(f"❌ {stage_name} TIMEOUT!")
-            print("   Stage exceeded 1 hour time limit")
-
+            print(f"❌ {stage_name} TIMEOUT (exceeded 1 hour)")
             self.metadata['errors'].append({
                 'stage': stage_name,
                 'error': 'Timeout after 1 hour',
                 'timestamp': datetime.now().isoformat()
             })
-
-            self.log(f"Stage {stage_name} timed out", "ERROR")
             return False
 
         except Exception as e:
-            print(f"❌ {stage_name} EXCEPTION!")
-            print(f"   Unexpected error: {e}")
-
+            print(f"❌ {stage_name} ERROR: {e}")
             self.metadata['errors'].append({
                 'stage': stage_name,
                 'error': str(e),
                 'timestamp': datetime.now().isoformat()
             })
-
-            self.log(f"Stage {stage_name} exception: {e}", "ERROR")
             return False
 
     def run_complete_pipeline(self):
@@ -348,10 +309,10 @@ class RobustPipelineOrchestrator:
         required_stages = sum(1 for stage in stages if stage['required'])
         total_stages = len(stages)
 
-        self.log(f"Starting pipeline with {total_stages} stages ({required_stages} required)")
-
         for i, stage in enumerate(stages):
-            print(f"\n🚀 PROGRESS: Stage {i+1}/{total_stages}")
+            print(f"\n{'='*70}")
+            print(f"📊 Stage {i+1}/{total_stages}: {stage['name']}")
+            print(f"{'='*70}")
 
             success = self.run_stage(
                 stage['name'],
@@ -363,19 +324,6 @@ class RobustPipelineOrchestrator:
 
             if success:
                 successful_stages += 1
-
-                # Progress update
-                progress = (successful_stages / total_stages) * 100
-                print(f"\n📊 Overall Progress: {progress:.1f}% ({successful_stages}/{total_stages} completed)")
-
-                # Time estimation
-                elapsed = (datetime.now() - self.start_time).total_seconds()
-                if successful_stages > 0:
-                    avg_time_per_stage = elapsed / successful_stages
-                    remaining_stages = total_stages - successful_stages
-                    estimated_remaining = avg_time_per_stage * remaining_stages
-                    print(f"⏱️  Estimated remaining time: {estimated_remaining/60:.1f} minutes")
-
             elif stage['required']:
                 print(f"\n❌ Pipeline stopped at required stage: {stage['name']}")
                 break
@@ -406,57 +354,30 @@ class RobustPipelineOrchestrator:
     def generate_final_report(self, successful, total, required, duration, log_path):
         """Generate comprehensive final report"""
 
-        print(f"\n" + "="*80)
+        print()
+        print("="*80)
 
         pipeline_success = successful >= required
 
         if pipeline_success:
-            print("🎉 ROBUST PIPELINE COMPLETED SUCCESSFULLY!")
+            print("✅ PIPELINE COMPLETED")
             print("="*80)
-            print("🏆 ACHIEVEMENTS:")
-            print(f"   ✅ Completed stages: {successful}/{total}")
-            print(f"   ✅ Required stages: {required}/{required}")
-            print(f"   ⏱️  Total time: {duration/3600:.2f} hours ({duration/60:.1f} minutes)")
-
-            if successful == total:
-                print(f"   🌟 Perfect execution: All stages completed!")
-            else:
-                print(f"   🎯 Core pipeline complete: All required stages finished")
-
-            print(f"\n📂 ROBUST FILE ORGANIZATION:")
-            print(f"   🗂️  Backend: {self.backend_dir}")
-            print(f"   🔧 Processed: {self.paths['data_processed']}")
-            print(f"   🤖 Models: {self.paths['models']}")
-            print(f"   📈 Visualizations: {self.backend_dir / 'plots'}")
-
-            print(f"\n🚀 YOUR SYSTEM IS READY!")
-            print(f"   1. 🔮 Make predictions using trained models")
-            print(f"   2. 📊 Check visualizations in plots/")
-            print(f"   3. 🌐 Build web interface in frontend/")
-            print(f"   4. 🚀 Deploy using Docker containers")
+            print(f"Stages: {successful}/{total} | Time: {duration/60:.1f} min")
+            print(f"Models: {self.paths['models']}")
+            print(f"Plots: {self.backend_dir / 'plots'}")
 
         else:
-            print("❌ PIPELINE INCOMPLETE!")
+            print("❌ PIPELINE INCOMPLETE")
             print("="*80)
-            print(f"📊 COMPLETION STATUS:")
-            print(f"   ✅ Successful: {successful}/{total} stages")
-            print(f"   ❌ Required missing: {required - successful} stages")
-            print(f"   ⏱️  Runtime: {duration/60:.1f} minutes")
+            print(f"Completed: {successful}/{total} stages | Missing: {required - successful} required")
+            print(f"Runtime: {duration/60:.1f} min")
 
             if self.metadata['errors']:
-                print(f"\n🔍 ERRORS ENCOUNTERED:")
-                for error in self.metadata['errors'][-3:]:  # Show last 3 errors
-                    print(f"   • {error['stage']}: {error['error']}")
+                print(f"\nErrors:")
+                for error in self.metadata['errors'][-2:]:
+                    print(f"  • {error['stage']}: {error['error']}")
 
-            print(f"\n💡 TROUBLESHOOTING:")
-            print(f"   1. 📋 Check execution log: {log_path}")
-            print(f"   2. 🔍 Review error messages above")
-            print(f"   3. 🔧 Run individual stages manually:")
-            print(f"      cd {self.current_dir}")
-            print(f"      python <script_name>.py")
-
-        print(f"\n📋 Complete execution log: {log_path}")
-        print(f"🕒 Session ended: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"\nLog: {log_path}")
         print("="*80)
 
 def main():
