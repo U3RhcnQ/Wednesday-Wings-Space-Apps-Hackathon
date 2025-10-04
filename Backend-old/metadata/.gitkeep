@@ -1,3 +1,0 @@
-# This file ensures the metadata directory is tracked by git
-# Actual metadata files are ignored per .gitignore
-
