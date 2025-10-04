@@ -670,7 +670,7 @@ class ExoplanetModelTrainer:
         
         # Add model name annotations
         for i, name in enumerate(model_names):
-            ax3.annotate(name.replace(' ', '\\n'), (recalls[i], precisions[i]), 
+            ax3.annotate(name.replace(' ', '\n'), (recalls[i], precisions[i]), 
                         xytext=(5, 5), textcoords='offset points', fontsize=8, alpha=0.8)
         
         # 4. Training Time Comparison (Middle Left)
@@ -728,7 +728,7 @@ class ExoplanetModelTrainer:
             
             bars = ax.bar(metrics_names, metrics_values, color=colors[idx], alpha=0.7)
             ax.set_ylim([0, 1])
-            ax.set_title(f'{model_name}\\nDetailed Metrics', fontweight='bold')
+            ax.set_title(f'{model_name}\nDetailed Metrics', fontweight='bold')
             ax.grid(True, alpha=0.3)
             
             # Add value labels on bars
@@ -833,10 +833,12 @@ def main():
     
     try:
         results = trainer.run_complete_training_pipeline()
-        print("\\n✅ Training pipeline completed successfully!")
+        print()
+        print("✅ Training pipeline completed successfully!")
         return results
     except Exception as e:
-        print(f"\\n❌ Training failed: {str(e)}")
+        print()
+        print(f"❌ Training failed: {str(e)}")
         raise
 
 if __name__ == "__main__":

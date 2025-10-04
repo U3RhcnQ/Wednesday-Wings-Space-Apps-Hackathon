@@ -35,14 +35,20 @@ def setup_logging():
 
     log_file = logs_dir / f'sanitization_log_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt'
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler()
-        ]
-    )
+    # Create logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # File handler with timestamps
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    
+    # Console handler without timestamps
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter('%(message)s'))
+    
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
 
     return log_file
 
@@ -111,6 +117,13 @@ def run_sanitizer(dataset_name, config):
         logging.error(f'{dataset_name} sanitizer script not found')
         return False
 
+    # Log to file only
+    logger = logging.getLogger()
+    console_handler = None
+    if len(logger.handlers) > 1:
+        console_handler = logger.handlers[1]
+        logger.removeHandler(console_handler)
+    
     logging.info(f'Running {config["module_name"]} for {dataset_name} dataset')
 
     try:
@@ -120,25 +133,48 @@ def run_sanitizer(dataset_name, config):
         if module is None:
             raise ImportError(f'Could not load {config["module_name"]}')
 
-        # Run the main function
+        # Run the main function (suppress its output)
         if hasattr(module, 'main'):
-            result = module.main()
+            # Temporarily suppress stdout for cleaner output
+            import io
+            import contextlib
+            
+            f = io.StringIO()
+            with contextlib.redirect_stdout(f):
+                result = module.main()
+            
+            # Log captured output to file only
+            output = f.getvalue()
+            if output:
+                for line in output.splitlines():
+                    logging.info(line)
 
             if result:
                 logging.info(f'✓ {dataset_name} sanitization completed successfully')
+                # Restore console handler
+                if console_handler:
+                    logger.addHandler(console_handler)
                 return True
             else:
                 logging.error(f'✗ {dataset_name} sanitization failed')
+                # Restore console handler
+                if console_handler:
+                    logger.addHandler(console_handler)
                 return False
         else:
             logging.error(f'✗ {dataset_name} sanitizer has no main() function')
+            # Restore console handler
+            if console_handler:
+                logger.addHandler(console_handler)
             return False
 
     except Exception as e:
         logging.error(f'Error in {dataset_name} data sanitization: {e}')
-        logging.error(f'✗ {dataset_name} sanitization failed: {e}')
         import traceback
         logging.error(traceback.format_exc())
+        # Restore console handler
+        if console_handler:
+            logger.addHandler(console_handler)
         return False
 
 
@@ -187,11 +223,22 @@ def main():
     # Setup logging
     log_file = setup_logging()
 
-    logging.info(f'Data sanitization session started at {datetime.now()}')
-    logging.info(f'Log file: {log_file}')
+    print('🧹 Data Sanitization')
 
-    # Find available sanitizer scripts
+    # Find available sanitizer scripts (log to file only)
+    logger = logging.getLogger()
+    file_only = logger.handlers[0]  # File handler
+    
+    # Temporarily remove console handler for script discovery messages
+    console_handler = logger.handlers[1] if len(logger.handlers) > 1 else None
+    if console_handler:
+        logger.removeHandler(console_handler)
+    
     sanitizer_configs = find_sanitizer_scripts()
+    
+    # Restore console handler
+    if console_handler:
+        logger.addHandler(console_handler)
 
     # Run each sanitizer
     results = {}
@@ -199,41 +246,22 @@ def main():
 
     for dataset_name, config in sanitizer_configs.items():
         if config['script_path']:
-            logging.info('')
-            logging.info('=' * 60)
-            logging.info(f'Running {config["module_name"]} for {dataset_name} dataset')
-            logging.info('=' * 60)
+            print(f'📊 Processing {dataset_name}...')
 
             success = run_sanitizer(dataset_name, config)
             results[dataset_name] = success
 
             if success:
                 successful_runs += 1
+                print(f'   ✓ {dataset_name} sanitized successfully')
+            else:
+                print(f'   ✗ {dataset_name} sanitization failed')
         else:
-            logging.error(f'Skipping {dataset_name} - no sanitizer script found')
+            print(f'   ✗ {dataset_name} - sanitizer script not found')
             results[dataset_name] = False
 
     # Generate summary
-    logging.info('')
-    logging.info('=' * 60)
-    logging.info('SANITIZATION SUMMARY')
-    logging.info('=' * 60)
-    logging.info(f'Total datasets processed: {len(results)}')
-    logging.info(f'Successful runs: {successful_runs}')
-    logging.info(f'Failed runs: {len(results) - successful_runs}')
-
-    for dataset_name, success in results.items():
-        status = '✓ SUCCESS' if success else '✗ FAILED'
-        logging.info(f'  {dataset_name}: {status}')
-
-    # Check output files
-    logging.info('')
-    output_files_found = check_output_files()
-
-    # Final status
-    logging.info('')
-    logging.info(f'Session completed at {datetime.now()}')
-    logging.info(f'Full log available at: {log_file}')
+    print(f'\n📋 Summary: {successful_runs}/{len(results)} datasets processed successfully')
 
     # Return success if at least one sanitizer worked
     return successful_runs > 0

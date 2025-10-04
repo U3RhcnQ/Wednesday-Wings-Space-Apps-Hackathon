@@ -104,18 +104,7 @@ class FixedDataAcquisition:
         }
 
         self.log_file = self.paths['logs'] / f"data_acquisition_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-
-        print("=" * 80)
-        print("🚀 FIXED EXOPLANET DATA ACQUISITION")
-        print("NASA Space Apps Challenge 2025")
-        print("=" * 80)
-        print(f"Pipeline Version: {self.metadata['pipeline_version']}")
-        print(f"Backend Root: {backend_dir}")
-        print(f"Using Proven Working NASA API URLs")
-        print(f"Log File: {self.log_file}")
-        print("=" * 80)
-
-        self.log("Fixed data acquisition initialized with working URLs")
+        print("📥 Data Acquisition")
 
     def log(self, message, level="INFO"):
         """Log messages to file and console"""
@@ -124,7 +113,7 @@ class FixedDataAcquisition:
 
         try:
             with open(self.log_file, 'a') as f:
-                f.write(log_entry + '\\n')
+                f.write(log_entry + '\n')
         except:
             pass
 
@@ -365,16 +354,9 @@ class FixedDataAcquisition:
 
     def download_all_datasets(self, force_download=False):
         """Download all datasets using proven working URLs"""
-        self.log("Starting batch download with proven working URLs...")
-
         # Check existing data first
         existing_files = self.check_existing_data()
-
         successful_downloads = 0
-
-        print("\\n" + "=" * 80)
-        print("📥 DOWNLOADING ALL DATASETS (FIXED URLS)")
-        print("=" * 80)
 
         for dataset_key, config in self.dataset_configs.items():
             df, filepath, metadata = self.download_dataset_fixed(dataset_key, force_download)
@@ -398,26 +380,13 @@ class FixedDataAcquisition:
             summary_path = metadata_dir / "data_acquisition_summary.json"
             with open(summary_path, 'w') as f:
                 json.dump(self.metadata, f, indent=4, default=str)
-            self.log(f"Summary saved: {summary_path}")
-
-        print("\\n" + "=" * 80)
-        print("📊 DATA ACQUISITION SUMMARY")
-        print("=" * 80)
-        print(f"✅ Successful: {successful_downloads}/{len(self.dataset_configs)} datasets")
-        print(f"📁 Existing files: {len(existing_files)}")
-        print(f"🔗 Using proven working NASA API URLs")
-        print(f"📝 Log file: {self.log_file}")
-        print("=" * 80)
 
         return successful_downloads > 0
 
     def generate_statistics(self):
         """Generate comprehensive statistics across all datasets"""
         if not self.datasets:
-            self.log("No datasets available for statistics", "WARNING")
             return None
-
-        self.log("Generating combined statistics...")
 
         stats = {
             'generation_timestamp': datetime.now().isoformat(),
@@ -462,19 +431,13 @@ class FixedDataAcquisition:
         with open(stats_path, 'w') as f:
             json.dump(stats, f, indent=4, default=str)
 
-        self.log("📊 Combined Dataset Statistics:")
-        self.log(f"   - Total samples: {stats['total_samples_all_datasets']:,}")
-        self.log(f"   - Confirmed planets: {stats['total_confirmed_planets']:,}")
-        self.log(f"   - Planet percentage: {stats['overall_planet_percentage']:.2f}%")
-        self.log(f"   - Statistics saved: {stats_path}")
+        print(f"📊 Total: {stats['total_samples_all_datasets']:,} samples, {stats['total_confirmed_planets']:,} planets ({stats['overall_planet_percentage']:.1f}%)")
 
         return stats
 
 
 def main():
     """Main execution function with fixed URLs"""
-    print("🌟 Starting Fixed Data Acquisition with Working URLs...")
-
     # Initialize data acquisition
     data_acq = FixedDataAcquisition()
 
@@ -486,24 +449,10 @@ def main():
         if data_acq.datasets:
             data_acq.generate_statistics()
 
-        if success or len(data_acq.datasets) > 0:
-            data_acq.log("✅ FIXED DATA ACQUISITION COMPLETED SUCCESSFULLY!")
-
-            print("\\n🎯 NEXT STEPS:")
-            print("1. ✅ Data now available in datasets/ directory")
-            print("2. 🧹 Run sanitization: Your scripts will find the data")
-            print("3. 🔄 Continue with preprocessing and training")
-            print("4. 🚀 All URLs are now working correctly!")
-
-            return True
-        else:
-            data_acq.log("⚠️  No datasets acquired - check network connectivity", "WARNING")
-            return False
+        return success or len(data_acq.datasets) > 0
 
     except Exception as e:
-        data_acq.log(f"Fatal error in fixed data acquisition: {e}", "ERROR")
-        import traceback
-        data_acq.log(traceback.format_exc(), "ERROR")
+        print(f"❌ Error: {e}")
         return False
 
 
