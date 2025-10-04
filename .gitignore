@@ -105,3 +105,37 @@ Backend/metadata/*
 # Uploaded files
 Backend/uploads/*
 !Backend/uploads/.gitkeep
+
+# Normalized data and ML artifacts
+Backend/data/normalised/*
+!Backend/data/normalised/.gitkeep
+Backend/data/processed/*
+!Backend/data/processed/.gitkeep
+
+# Machine learning models and scalers
+Backend/models/*
+!Backend/models/.gitkeep
+*.joblib
+*.pkl
+*.h5
+*.model
+
+# Normalization artifacts
+Backend/normalisation/__pycache__/
+
+# Additional plot directories
+Backend/plots/normalization/*
+!Backend/plots/normalization/.gitkeep
+Backend/plots/data_quality/*
+!Backend/plots/data_quality/.gitkeep
+
+# Large data files (CSV files over certain size)
+Backend/data/raw/*.csv
+Backend/data/sanitized/*.csv
+Backend/cleaned_datasets/*.csv
+
+# Temporary and backup files
+*.tmp
+*.bak
+*~
+.#*
