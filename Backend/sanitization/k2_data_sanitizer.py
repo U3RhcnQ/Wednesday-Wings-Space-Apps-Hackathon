@@ -433,15 +433,21 @@ def save_cleaned_k2_data(df, column_mapping):
     """Save cleaned K2 data"""
     backend_root = detect_backend_root()
 
-    # Save to cleaned_datasets directory (overwrite the original with HTML-cleaned version)
-    output_dir = backend_root / 'cleaned_datasets'
+    # Save to data/sanitized directory
+    output_dir = backend_root / 'data' / 'sanitized'
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save as k2_cleaned.csv (replacing the HTML-contaminated version)
-    output_path = output_dir / 'k2_cleaned.csv'
+    # Save CSV as k2_sanitized.csv
+    output_path = output_dir / 'k2_sanitized.csv'
     df.to_csv(output_path, index=False)
 
-    logging.info(f'HTML-cleaned K2 data saved: {output_path}')
+    # Save column mapping as JSON
+    import json
+    mapping_path = output_dir / 'k2_column_mapping.json'
+    with open(mapping_path, 'w') as f:
+        json.dump(column_mapping, f, indent=2)
+
+    logging.info(f'Cleaned K2 data saved: {output_path}')
     logging.info(f'Final dataset shape: {df.shape}')
 
     return output_path
