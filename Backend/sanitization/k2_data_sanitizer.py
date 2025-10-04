@@ -37,11 +37,11 @@ def find_k2_data_file():
 
     # Possible file locations in order of preference
     possible_locations = [
-        # Current cleaned datasets location (from run_all_sanitizers.py)
-        backend_root / 'cleaned_datasets' / 'k2_cleaned.csv',
-        
-        # New data acquisition locations
+        # Primary location - new datasets directory
         backend_root / 'datasets' / 'k2.csv',
+        
+        # Fallback locations
+        backend_root / 'cleaned_datasets' / 'k2_cleaned.csv',
         backend_root / 'data' / 'raw' / 'k2_candidates_raw.csv',
 
         # Legacy locations
