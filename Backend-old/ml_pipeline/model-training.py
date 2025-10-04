@@ -2,22 +2,6 @@
 # NASA Space Apps Challenge 2025
 # Enhanced with ROC/PR curves, comprehensive metadata, and H100 GPU optimization
 
-import sys
-import os
-from pathlib import Path
-
-# Add project paths
-current_dir = Path(__file__).parent
-backend_dir = current_dir.parent
-project_root = backend_dir.parent
-
-sys.path.extend([
-    str(backend_dir),
-    str(backend_dir / 'config'),
-    str(backend_dir / 'utils'),
-    str(backend_dir / 'sanitization')
-])
-
 import numpy as np
 import pandas as pd
 import json
@@ -48,38 +32,12 @@ import GPUtil
 
 warnings.filterwarnings('ignore')
 
-# Import path configuration
-try:
-    from config.paths import PROJECT_PATHS, ensure_dir
-
-    PATHS_CONFIGURED = True
-except ImportError:
-    PATHS_CONFIGURED = False
-    PROJECT_PATHS = {
-        'datasets': backend_dir / 'datasets',
-        'cleaned_datasets': backend_dir / 'cleaned_datasets',
-        'data_sanitized': backend_dir / 'data' / 'sanitized',
-        'data_processed': backend_dir / 'data' / 'processed',
-        'models': backend_dir / 'models',
-        'metadata': backend_dir / 'metadata',
-        'logs': backend_dir / 'logs'
-    }
-
-
-    def ensure_dir(name):
-        path = PROJECT_PATHS.get(name)
-        if path:
-            path.mkdir(parents=True, exist_ok=True)
-            return path
-        return None
-
 class ExoplanetModelTrainer:
     """
     Advanced model training with comprehensive metadata, ROC/PR curves, and GPU optimization
     """
     
-    def __init__(self, paths=None):
-        self.paths = paths if paths else PROJECT_PATHS
+    def __init__(self):
         self.metadata = {
             'pipeline_version': '1.0.0',
             'module': 'model_training',
@@ -143,13 +101,13 @@ class ExoplanetModelTrainer:
         
         try:
             # Load features
-            X = pd.read_csv(self.paths['data_processed'] / 'features_processed.csv').values
+            X = pd.read_csv('data/features_processed.csv').values
             
             # Load labels
-            y = np.load(self.paths['data_processed'] / 'labels_processed.npy')
+            y = np.load('data/labels_processed.npy')
             
             # Load feature names
-            feature_names = joblib.load(self.paths['data_processed'] /  'feature_names.joblib')
+            feature_names = joblib.load('data/feature_names.joblib')
             
             print(f"   ✅ Data loaded successfully:")
             print(f"      - Features: {X.shape}")
@@ -332,14 +290,14 @@ class ExoplanetModelTrainer:
                 'train_recall': recall_score(y_train, y_pred_train),
                 'train_f1': f1_score(y_train, y_pred_train),
                 'train_roc_auc': roc_auc_score(y_train, y_pred_proba_train),
-
+                
                 # Validation metrics
                 'val_accuracy': accuracy_score(y_val, y_pred_val),
                 'val_precision': precision_score(y_val, y_pred_val),
                 'val_recall': recall_score(y_val, y_pred_val),
                 'val_f1': f1_score(y_val, y_pred_val),
                 'val_roc_auc': roc_auc_score(y_val, y_pred_proba_val),
-
+                
                 # Test metrics
                 'test_accuracy': accuracy_score(y_test, y_pred_test),
                 'test_precision': precision_score(y_test, y_pred_test),
@@ -347,15 +305,13 @@ class ExoplanetModelTrainer:
                 'test_f1': f1_score(y_test, y_pred_test),
                 'test_roc_auc': roc_auc_score(y_test, y_pred_proba_test),
                 'test_average_precision': average_precision_score(y_test, y_pred_proba_test),
-
+                
                 # Training metadata
                 'training_time_seconds': training_time,
-                'model_params_count': self._count_model_parameters(model)
+                'model_params_count': self._count_model_parameters(model),
+                'overfitting_score': metrics.get('train_roc_auc', 0) - metrics.get('test_roc_auc', 0)
             }
-
-            # Now compute overfitting score afterwards
-            metrics['overfitting_score'] = metrics['train_roc_auc'] - metrics['test_roc_auc']
-
+            
             # Store results
             model_performances[model_name] = metrics
             trained_models[model_name] = model

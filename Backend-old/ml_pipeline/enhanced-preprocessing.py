@@ -77,21 +77,21 @@ class ExoplanetPreprocessorEnhanced:
         datasets_info = {
             'kepler': {
                 'url': 'https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=SELECT+*+FROM+cumulative&format=csv',
-                'filename': 'Backend/datasets/koi.csv',
+                'filename': 'Backend-old/datasets/koi.csv',
                 'sanitizer': 'koi_data_sanitizer' if SANITIZERS_AVAILABLE else None,
-                'cleaned_file': 'Backend/cleaned_datasets/koi_cleaned.csv'
+                'cleaned_file': 'Backend-old/cleaned_datasets/koi_cleaned.csv'
             },
             'tess': {
                 'url': 'https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=SELECT+*+FROM+toi&format=csv',
-                'filename': 'Backend/datasets/toi.csv', 
+                'filename': 'Backend-old/datasets/toi.csv',
                 'sanitizer': 'toi_data_sanitizer' if SANITIZERS_AVAILABLE else None,
-                'cleaned_file': 'Backend/cleaned_datasets/toi_cleaned.csv'
+                'cleaned_file': 'Backend-old/cleaned_datasets/toi_cleaned.csv'
             },
             'k2': {
                 'url': 'https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=SELECT+*+FROM+k2pandc&format=csv',
-                'filename': 'Backend/datasets/k2.csv',
+                'filename': 'Backend-old/datasets/k2.csv',
                 'sanitizer': 'k2_data_sanitizer' if SANITIZERS_AVAILABLE else None, 
-                'cleaned_file': 'Backend/cleaned_datasets/k2_cleaned.csv'
+                'cleaned_file': 'Backend-old/cleaned_datasets/k2_cleaned.csv'
             }
         }
         
@@ -156,17 +156,17 @@ class ExoplanetPreprocessorEnhanced:
         # Define file locations (prefer cleaned over raw)
         dataset_configs = {
             'kepler': {
-                'files': ['Backend/cleaned_datasets/koi_cleaned.csv', 'Backend/datasets/koi.csv', 'data/kepler_koi_raw.csv'],
+                'files': ['Backend-old/cleaned_datasets/koi_cleaned.csv', 'Backend-old/datasets/koi.csv', 'data/kepler_koi_raw.csv'],
                 'disposition_cols': ['koi_disposition'],
                 'schema_type': 'koi'
             },
             'tess': {
-                'files': ['Backend/cleaned_datasets/toi_cleaned.csv', 'Backend/datasets/toi.csv', 'data/tess_toi_raw.csv'],
+                'files': ['Backend-old/cleaned_datasets/toi_cleaned.csv', 'Backend-old/datasets/toi.csv', 'data/tess_toi_raw.csv'],
                 'disposition_cols': ['tfopwg_disp'],
                 'schema_type': 'toi'
             },
             'k2': {
-                'files': ['Backend/cleaned_datasets/k2_cleaned.csv', 'Backend/datasets/k2.csv', 'data/k2_candidates_raw.csv'],
+                'files': ['Backend-old/cleaned_datasets/k2_cleaned.csv', 'Backend-old/datasets/k2.csv', 'data/k2_candidates_raw.csv'],
                 'disposition_cols': ['disposition', 'k2c_disp'],
                 'schema_type': 'k2'
             }
