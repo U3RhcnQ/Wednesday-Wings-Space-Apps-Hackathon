@@ -1,4 +1,44 @@
+import { useState, useEffect } from 'react';
+
+interface PlotInfo {
+  filename: string;
+  size_bytes: number;
+  created: string;
+  modified: string;
+  url: string;
+}
+
 export default function KOIDataPage() {
+  const [plots, setPlots] = useState<PlotInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchPlots();
+  }, []);
+
+  const fetchPlots = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/plots');
+      const data = await response.json();
+      setPlots(data.datasets.koi || []);
+    } catch (error) {
+      console.error('Error fetching plots:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatPlotName = (filename: string): string => {
+    const name = filename
+      .replace(/^koi_/, '')
+      .replace(/\.png$/, '')
+      .replace(/_/g, ' ');
+    return name
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  };
+
   return (
     <div className="py-8">
       <div className="mb-8">
@@ -10,55 +50,34 @@ export default function KOIDataPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Chart Placeholder 1 */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-lg p-6">
-          <h3 className="text-xl font-semibold mb-4 text-blue-300">Planet Size Distribution</h3>
-          <div className="bg-white/20 rounded-lg h-64 flex items-center justify-center">
-            <div className="text-center">
-              <div className="text-4xl mb-2">📊</div>
-              <p className="text-gray-300">Chart Placeholder</p>
-              <p className="text-sm text-gray-400">Visualization coming soon</p>
-            </div>
-          </div>
+      {loading ? (
+        <div className="text-center py-12">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-400 mx-auto mb-4"></div>
+          <p className="text-gray-300">Loading visualizations...</p>
         </div>
-
-        {/* Chart Placeholder 2 */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-lg p-6">
-          <h3 className="text-xl font-semibold mb-4 text-blue-300">Orbital Period Analysis</h3>
-          <div className="bg-white/20 rounded-lg h-64 flex items-center justify-center">
-            <div className="text-center">
-              <div className="text-4xl mb-2">📈</div>
-              <p className="text-gray-300">Chart Placeholder</p>
-              <p className="text-sm text-gray-400">Visualization coming soon</p>
-            </div>
-          </div>
+      ) : plots.length === 0 ? (
+        <div className="text-center py-12">
+          <p className="text-gray-400 text-xl">No visualizations available</p>
         </div>
-
-        {/* Chart Placeholder 3 */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-lg p-6">
-          <h3 className="text-xl font-semibold mb-4 text-blue-300">Star Temperature vs Planet Radius</h3>
-          <div className="bg-white/20 rounded-lg h-64 flex items-center justify-center">
-            <div className="text-center">
-              <div className="text-4xl mb-2">🌟</div>
-              <p className="text-gray-300">Scatter Plot Placeholder</p>
-              <p className="text-sm text-gray-400">Visualization coming soon</p>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {plots.map((plot) => (
+            <div key={plot.filename} className="bg-white/10 backdrop-blur-lg rounded-lg overflow-hidden border border-white/10 hover:border-blue-400/50 transition-all">
+              <div className="p-4 border-b border-white/10">
+                <h3 className="text-xl font-semibold text-blue-300">{formatPlotName(plot.filename)}</h3>
+              </div>
+              <div className="p-4 bg-white/5">
+                <img
+                  src={`http://localhost:8000${plot.url}`}
+                  alt={formatPlotName(plot.filename)}
+                  className="w-full h-auto rounded"
+                  loading="lazy"
+                />
+              </div>
             </div>
-          </div>
+          ))}
         </div>
-
-        {/* Chart Placeholder 4 */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-lg p-6">
-          <h3 className="text-xl font-semibold mb-4 text-blue-300">Habitability Zone Analysis</h3>
-          <div className="bg-white/20 rounded-lg h-64 flex items-center justify-center">
-            <div className="text-center">
-              <div className="text-4xl mb-2">🌍</div>
-              <p className="text-gray-300">Zone Chart Placeholder</p>
-              <p className="text-sm text-gray-400">Visualization coming soon</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* Summary Stats */}
       <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">

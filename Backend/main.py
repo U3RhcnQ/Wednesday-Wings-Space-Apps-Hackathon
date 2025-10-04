@@ -44,6 +44,9 @@ from datetime import datetime
 UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
+# Plots directory
+PLOTS_DIR = Path(__file__).parent / "plots"
+
 # Create FastAPI app
 app = FastAPI(
     title="Space Apps FastAPI Server",
@@ -294,8 +297,6 @@ async def get_file(filename: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve file: {str(e)}")
 
-# Replace the entire @app.get("/data/preview/{filename}") function with this fixed version:
-
 @app.get("/data/preview/{filename}")
 async def preview_data(
     filename: str, 
@@ -530,6 +531,94 @@ async def preview_data(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Preview failed: {str(e)}")
+
+@app.get("/plots")
+async def list_all_plots():
+    """
+    List all available plot images organized by dataset
+    """
+    try:
+        if not PLOTS_DIR.exists():
+            return {
+                "message": "Plots directory not found",
+                "datasets": {},
+                "status": "success"
+            }
+        
+        # Organize plots by dataset
+        datasets = {"k2": [], "koi": [], "toi": []}
+        
+        for file_path in PLOTS_DIR.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in ['.png', '.jpg', '.jpeg', '.svg']:
+                filename = file_path.name
+                
+                # Determine which dataset this plot belongs to
+                if filename.startswith('k2_'):
+                    dataset = 'k2'
+                elif filename.startswith('koi_'):
+                    dataset = 'koi'
+                elif filename.startswith('toi_'):
+                    dataset = 'toi'
+                else:
+                    continue  # Skip files that don't match our naming convention
+                
+                file_stats = file_path.stat()
+                datasets[dataset].append({
+                    "filename": filename,
+                    "size_bytes": file_stats.st_size,
+                    "created": datetime.fromtimestamp(file_stats.st_ctime).isoformat(),
+                    "modified": datetime.fromtimestamp(file_stats.st_mtime).isoformat(),
+                    "url": f"/plots/{filename}"
+                })
+        
+        # Sort each dataset's plots by filename
+        for dataset in datasets:
+            datasets[dataset].sort(key=lambda x: x["filename"])
+        
+        total_plots = sum(len(plots) for plots in datasets.values())
+        
+        return {
+            "message": f"Found {total_plots} plot images across all datasets",
+            "datasets": datasets,
+            "status": "success"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list plots: {str(e)}")
+
+@app.get("/plots/{filename}")
+async def get_plot(filename: str):
+    """
+    Retrieve a specific plot image by filename
+    """
+    try:
+        file_path = PLOTS_DIR / filename
+        
+        # Check if file exists
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"Plot '{filename}' not found")
+        
+        # Check if it's actually a file
+        if not file_path.is_file():
+            raise HTTPException(status_code=400, detail=f"'{filename}' is not a file")
+        
+        # Determine media type based on extension
+        media_types = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.svg': 'image/svg+xml'
+        }
+        media_type = media_types.get(file_path.suffix.lower(), 'application/octet-stream')
+        
+        # Return the image file
+        return FileResponse(
+            path=file_path,
+            media_type=media_type
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve plot: {str(e)}")
 
 if __name__ == "__main__":
     # Run the server
