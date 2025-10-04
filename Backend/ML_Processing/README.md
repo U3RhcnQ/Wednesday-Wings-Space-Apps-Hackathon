@@ -75,7 +75,7 @@ python3 download_data.py --data-dir /path/to/data
 #### Step 2: Preprocess Data
 
 ```bash
-python3 preprocess_data.py
+python3 advanced_preprocessing.py
 ```
 
 This script:

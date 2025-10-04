@@ -148,7 +148,14 @@ def load_and_prepare_data():
     """Load processed unified dataset and prepare for training"""
     
     print("Loading processed dataset...")
-    data_path = os.path.join(Config.DATA_DIR, Config.PROCESSED_DATA_FILE)
+    # Resolve paths relative to script location
+    script_dir = Path(__file__).parent
+    data_dir = script_dir / Config.DATA_DIR
+    data_path = data_dir / Config.PROCESSED_DATA_FILE
+    
+    if not data_path.exists():
+        raise FileNotFoundError(f"❌ Processed data file not found: {data_path}")
+    
     df = pd.read_csv(data_path)
     
     print(f"Dataset shape: {df.shape}")

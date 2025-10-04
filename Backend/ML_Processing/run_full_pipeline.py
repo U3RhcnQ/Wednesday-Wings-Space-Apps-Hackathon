@@ -37,11 +37,11 @@ def main():
     
     # Step 2: Preprocess data
     print_header("STEP 2: Preprocess Data")
-    print("Running preprocess_data.py...\n")
+    print("Running advanced_preprocessing.py...\n")
     
     try:
-        from preprocess_data import preprocess_exoplanet_data
-        processed_df, feature_cols, scaler = preprocess_exoplanet_data()
+        from advanced_preprocessing import preprocess_and_save
+        processed_df, feature_cols, scaler = preprocess_and_save()
         
         if processed_df is None:
             print("❌ Preprocessing failed. Cannot continue.")
@@ -56,27 +56,44 @@ def main():
     print_header("STEP 3: Train Model")
     print("Running model_training.py...\n")
     
-    # Check if processed data exists
-    processed_file = Path('data/processed/unified_processed.csv')
+    # Check if processed data exists (resolve relative to script location)
+    script_dir = Path(__file__).parent
+    processed_file = script_dir / 'data' / 'processed' / 'unified_processed.csv'
     if not processed_file.exists():
         print(f"❌ Processed data file not found: {processed_file}")
         return False
     
-    print("✅ All prerequisites met!")
-    print("\nTo train the model, run:")
-    print("   python3 model_training.py")
-    print("\nOr import and use programmatically:")
-    print("   from model_training import main as train_model")
-    print("   train_model()")
+    print("✅ All prerequisites met! Starting model training...\n")
     
-    print_header("✅ PIPELINE SETUP COMPLETE")
-    print("Data is ready for training!")
-    print(f"\nPaths:")
-    print(f"  📁 Raw data: data/raw/")
-    print(f"  📁 Processed data: data/processed/")
-    print(f"  📁 Models will be saved to: models/")
-    print(f"  📁 Plots will be saved to: plots/graphs/")
-    print()
+    # Import and run model training
+    try:
+        # Change to the ML_Processing directory to ensure proper path resolution
+        original_dir = os.getcwd()
+        os.chdir(script_dir)
+        
+        from model_training import main as train_model
+        
+        # Run training with live output
+        train_model()
+        
+        # Return to original directory
+        os.chdir(original_dir)
+        
+        print_header("✅ TRAINING COMPLETE")
+        print("Models and plots have been saved!")
+        print(f"\nPaths:")
+        print(f"  📁 Raw data: {script_dir}/data/raw/")
+        print(f"  📁 Processed data: {script_dir}/data/processed/")
+        print(f"  📁 Models: {script_dir}/models/")
+        print(f"  📁 Plots: {script_dir}/plots/graphs/")
+        print()
+        
+    except Exception as e:
+        print(f"❌ Error during model training: {e}")
+        import traceback
+        traceback.print_exc()
+        os.chdir(original_dir)
+        return False
     
     return True
 

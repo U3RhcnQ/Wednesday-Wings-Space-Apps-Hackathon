@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, RobustScaler
 
 # COMPREHENSIVE FEATURE MAPPING - All Available Columns
@@ -158,22 +157,24 @@ def create_unified_dataset(koi_df, toi_df, k2_df, include_uncertainties=True):
     for dataset_name, df in [('KOI', koi_df), ('TOI', toi_df), ('K2', k2_df)]:
         print(f"Processing {dataset_name} dataset with {len(df)} rows...")
         
-        # Initialize unified dataframe
-        unified_df = pd.DataFrame()
-        
-        # Add dataset identifier
-        unified_df['dataset_source'] = dataset_name
-        unified_df['original_row_count'] = len(df)
+        # Collect all columns first to avoid DataFrame fragmentation
+        unified_data = {
+            'dataset_source': dataset_name,
+            'original_row_count': len(df)
+        }
         
         # Map all features
         for unified_name, mapping in unified_feature_mapping.items():
             source_col = mapping.get(dataset_name)
             
             if source_col and source_col in df.columns:
-                unified_df[unified_name] = df[source_col]
+                unified_data[unified_name] = df[source_col].values
             else:
                 # Fill with NaN for missing features
-                unified_df[unified_name] = np.nan
+                unified_data[unified_name] = np.nan
+        
+        # Create DataFrame once with all columns
+        unified_df = pd.DataFrame(unified_data)
         
         # Create target variable
         target_col = unified_feature_mapping['disposition'][dataset_name]
@@ -215,10 +216,11 @@ def advanced_preprocessing(df, handle_missing='smart', scaling_method='robust'):
     # Separate features by type
     identifier_cols = ['object_id', 'candidate_name', 'dataset_source', 'original_row_count']
     target_cols = ['target']
+    categorical_cols = ['disposition', 'confidence_score']  # Exclude categorical/text columns
     
-    # Get feature columns (excluding identifiers and target)
+    # Get feature columns (excluding identifiers, target, and categorical)
     feature_cols = [col for col in df.columns 
-                   if col not in identifier_cols + target_cols]
+                   if col not in identifier_cols + target_cols + categorical_cols]
     
     # Separate different types of features
     error_cols = [col for col in feature_cols if 'err1' in col or 'err2' in col]
@@ -242,12 +244,20 @@ def advanced_preprocessing(df, handle_missing='smart', scaling_method='robust'):
     for col in error_cols:
         if col in processed_df.columns:
             # Use median of available values or set high uncertainty
-            median_val = processed_df[col].median()
+            # Safely calculate median only if column has numeric data
+            try:
+                median_val = processed_df[col].median() if processed_df[col].notna().any() else np.nan
+            except (TypeError, ValueError):
+                median_val = np.nan
+            
             if pd.isna(median_val):
                 # If no error estimates available, use 10% of median value as uncertainty
                 base_col = col.replace('_err1', '').replace('_err2', '')
                 if base_col in processed_df.columns:
-                    base_median = processed_df[base_col].median()
+                    try:
+                        base_median = processed_df[base_col].median() if processed_df[base_col].notna().any() else np.nan
+                    except (TypeError, ValueError):
+                        base_median = np.nan
                     if not pd.isna(base_median):
                         processed_df[col] = processed_df[col].fillna(abs(base_median) * 0.1)
             else:
@@ -274,12 +284,26 @@ def advanced_preprocessing(df, handle_missing='smart', scaling_method='robust'):
                 processed_df[col] = processed_df[col].fillna(physical_defaults[col])
             else:
                 # Use median for other physical parameters
-                processed_df[col] = processed_df[col].fillna(processed_df[col].median())
+                # Safely calculate median only if column has numeric data
+                try:
+                    median_val = processed_df[col].median() if processed_df[col].notna().any() else np.nan
+                    if not pd.isna(median_val):
+                        processed_df[col] = processed_df[col].fillna(median_val)
+                except (TypeError, ValueError):
+                    # Skip non-numeric columns
+                    pass
     
     # 4. Magnitudes: Fill with median (brightness-dependent)
     for col in magnitude_cols:
         if col in processed_df.columns:
-            processed_df[col] = processed_df[col].fillna(processed_df[col].median())
+            # Safely calculate median only if column has numeric data
+            try:
+                median_val = processed_df[col].median() if processed_df[col].notna().any() else np.nan
+                if not pd.isna(median_val):
+                    processed_df[col] = processed_df[col].fillna(median_val)
+            except (TypeError, ValueError):
+                # Skip non-numeric columns
+                pass
     
     # Remove columns with >90% missing values
     missing_threshold = 0.9
@@ -291,17 +315,31 @@ def advanced_preprocessing(df, handle_missing='smart', scaling_method='robust'):
     
     # Update feature columns after dropping
     remaining_features = [col for col in processed_df.columns 
-                         if col not in identifier_cols + target_cols]
+                         if col not in identifier_cols + target_cols + categorical_cols]
+    
+    # Filter to only numeric columns for scaling
+    numeric_features = []
+    for col in remaining_features:
+        if col in processed_df.columns:
+            try:
+                # Check if column is numeric
+                pd.to_numeric(processed_df[col], errors='raise')
+                numeric_features.append(col)
+            except (TypeError, ValueError):
+                print(f"  Skipping non-numeric column: {col}")
     
     # Scale features [1][2]
-    print(f"Scaling {len(remaining_features)} features using {scaling_method} scaling...")
+    print(f"Scaling {len(numeric_features)} features using {scaling_method} scaling...")
     
     if scaling_method == 'robust':
         scaler = RobustScaler()
     else:
         scaler = StandardScaler()
     
-    processed_df[remaining_features] = scaler.fit_transform(processed_df[remaining_features])
+    processed_df[numeric_features] = scaler.fit_transform(processed_df[numeric_features])
+    
+    # Use numeric features as final feature list
+    remaining_features = numeric_features
     
     # Final statistics
     print(f"Preprocessing complete:")
@@ -311,24 +349,176 @@ def advanced_preprocessing(df, handle_missing='smart', scaling_method='robust'):
     
     return processed_df, remaining_features, scaler
 
-# Usage example:
-def load_and_unify_datasets():
+# Main preprocessing function
+def preprocess_and_save(data_dir='./data', verbose=True):
     """
-    Example usage of the unified dataset creation
+    Load raw data, preprocess, and save to data/processed
+    
+    Args:
+        data_dir: Base data directory (default: 'data')
+        verbose: Print progress messages
+        
+    Returns:
+        tuple: (processed_df, feature_columns, scaler) or (None, None, None) on error
     """
-    # Load datasets (replace with actual data loading)
-    # koi_df = pd.read_csv('https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+*+from+cumulative&format=csv')
-    # toi_df = pd.read_csv('https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+*+from+toi&format=csv')  
-    # k2_df = pd.read_csv('https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+*+from+k2pandc&format=csv')
+    import os
+    import json
+    from pathlib import Path
+    from datetime import datetime
     
-    # For demonstration:
-    print("To use this unified dataset framework:")
-    print("1. Load your datasets from NASA URLs")
-    print("2. Call create_unified_dataset(koi_df, toi_df, k2_df)")
-    print("3. Apply advanced_preprocessing(unified_df)")
-    print("4. Train your H100-optimized models!")
+    # Setup paths - resolve relative to script location
+    script_dir = Path(__file__).parent
+    if not Path(data_dir).is_absolute():
+        data_dir = script_dir / data_dir
+    else:
+        data_dir = Path(data_dir)
     
-    return None
+    raw_dir = data_dir / 'raw'
+    processed_dir = data_dir / 'processed'
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    
+    if verbose:
+        print("="*70)
+        print("EXOPLANET DATA PREPROCESSING PIPELINE")
+        print("="*70)
+        print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Raw data directory: {raw_dir.absolute()}")
+        print(f"Processed data directory: {processed_dir.absolute()}")
+        print("="*70 + "\n")
+    
+    # Check for raw data files
+    koi_file = raw_dir / 'koi.csv'
+    toi_file = raw_dir / 'toi.csv'
+    k2_file = raw_dir / 'k2.csv'
+    
+    missing_files = []
+    for file in [koi_file, toi_file, k2_file]:
+        if not file.exists():
+            missing_files.append(str(file))
+    
+    if missing_files:
+        print("❌ Missing raw data files:")
+        for file in missing_files:
+            print(f"   - {file}")
+        print("\n💡 Run download_data.py first to download the datasets")
+        return None, None, None
+    
+    # Load raw datasets
+    if verbose:
+        print("📂 Loading raw datasets...")
+    
+    try:
+        print("   Loading KOI dataset...")
+        koi_df = pd.read_csv(koi_file, comment='#')
+        print(f"   ✓ KOI: {len(koi_df)} rows, {len(koi_df.columns)} columns")
+        
+        print("   Loading TOI dataset...")
+        toi_df = pd.read_csv(toi_file, comment='#')
+        print(f"   ✓ TOI: {len(toi_df)} rows, {len(toi_df.columns)} columns")
+        
+        print("   Loading K2 dataset...")
+        k2_df = pd.read_csv(k2_file, comment='#', low_memory=False)
+        print(f"   ✓ K2: {len(k2_df)} rows, {len(k2_df.columns)} columns")
+        
+    except Exception as e:
+        print(f"❌ Error loading datasets: {e}")
+        return None, None, None
+    
+    # Create unified dataset
+    if verbose:
+        print(f"\n{'='*70}")
+        print("STEP 1: Creating Unified Dataset")
+        print(f"{'='*70}\n")
+    
+    try:
+        unified_df = create_unified_dataset(koi_df, toi_df, k2_df)
+        print(f"\n✅ Unified dataset created: {len(unified_df)} samples")
+    except Exception as e:
+        print(f"❌ Error creating unified dataset: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None, None
+    
+    # Advanced preprocessing
+    if verbose:
+        print(f"\n{'='*70}")
+        print("STEP 2: Advanced Preprocessing")
+        print(f"{'='*70}\n")
+    
+    try:
+        processed_df, feature_cols, scaler = advanced_preprocessing(
+            unified_df,
+            handle_missing='smart',
+            scaling_method='robust'
+        )
+        print(f"\n✅ Preprocessing complete")
+    except Exception as e:
+        print(f"❌ Error during preprocessing: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None, None
+    
+    # Save processed dataset
+    if verbose:
+        print(f"\n{'='*70}")
+        print("STEP 3: Saving Processed Data")
+        print(f"{'='*70}\n")
+    
+    output_file = processed_dir / 'unified_processed.csv'
+    try:
+        processed_df.to_csv(output_file, index=False)
+        file_size_mb = output_file.stat().st_size / (1024 * 1024)
+        print(f"💾 Saved processed dataset to: {output_file}")
+        print(f"   Size: {file_size_mb:.2f} MB")
+        print(f"   Samples: {len(processed_df)}")
+        print(f"   Features: {len(feature_cols)}")
+        print(f"   Target distribution:")
+        target_dist = processed_df['target'].value_counts()
+        for label, count in target_dist.items():
+            pct = (count / len(processed_df)) * 100
+            label_name = "Exoplanet" if label == 1 else "False Positive"
+            print(f"      {label_name} ({label}): {count} ({pct:.2f}%)")
+    except Exception as e:
+        print(f"❌ Error saving processed data: {e}")
+        return None, None, None
+    
+    # Save metadata
+    metadata = {
+        'creation_timestamp': datetime.now().isoformat(),
+        'total_samples': len(processed_df),
+        'num_features': len(feature_cols),
+        'feature_names': feature_cols,
+        'target_distribution': processed_df['target'].value_counts().to_dict(),
+        'source_files': {
+            'koi': str(koi_file),
+            'toi': str(toi_file),
+            'k2': str(k2_file)
+        },
+        'preprocessing': {
+            'missing_value_strategy': 'smart',
+            'scaling_method': 'robust'
+        }
+    }
+    
+    metadata_file = processed_dir / 'preprocessing_metadata.json'
+    try:
+        with open(metadata_file, 'w') as f:
+            json.dump(metadata, f, indent=4, default=str)
+        print(f"\n📋 Metadata saved to: {metadata_file}")
+    except Exception as e:
+        print(f"⚠️  Warning: Could not save metadata: {e}")
+    
+    if verbose:
+        print(f"\n{'='*70}")
+        print("✅ PREPROCESSING COMPLETE!")
+        print(f"{'='*70}\n")
+        print("Next steps:")
+        print("  1. Run model_training.py to train the exoplanet detection model")
+        print("  2. Models will be saved to: models/")
+        print("  3. Plots will be saved to: plots/graphs/")
+        print()
+    
+    return processed_df, feature_cols, scaler
 
 # Features statistics based on research papers [1][2]
 feature_stats = {
@@ -344,6 +534,37 @@ feature_stats = {
     }
 }
 
-print("Unified Feature Mapping Statistics:")
-for key, value in feature_stats.items():
-    print(f"  {key}: {value}")
+if __name__ != "__main__":
+    print("Unified Feature Mapping Statistics:")
+    for key, value in feature_stats.items():
+        print(f"  {key}: {value}")
+
+# Main execution
+if __name__ == "__main__":
+    import sys
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Preprocess exoplanet datasets')
+    parser.add_argument(
+        '--data-dir',
+        type=str,
+        default='data',
+        help='Base data directory (default: data)'
+    )
+    parser.add_argument(
+        '--quiet',
+        action='store_true',
+        help='Suppress progress messages'
+    )
+    
+    args = parser.parse_args()
+    
+    processed_df, feature_cols, scaler = preprocess_and_save(
+        data_dir=args.data_dir,
+        verbose=not args.quiet
+    )
+    
+    if processed_df is not None:
+        sys.exit(0)
+    else:
+        sys.exit(1)

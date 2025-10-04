@@ -1,32 +1,53 @@
-# Requirements file for FastAPI Server
+# Requirements file for Exoplanet Detection ML Pipeline
 # NASA Space Apps Challenge 2025
 # Install with: pip install -r requirements.txt
 
-# FastAPI and web server
+# ============================================================================
+# WEB SERVER
+# ============================================================================
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6  # For file uploads
 
-# Core Data Science Libraries (if needed later)
-numpy>=1.21.0
-pandas>=1.3.0
-scikit-learn>=1.0.0
-scipy>=1.7.0
+# ============================================================================
+# CORE DATA SCIENCE
+# ============================================================================
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+scipy>=1.11.0
 
-# Machine Learning Libraries (if needed later)
-lightgbm>=3.3.0
-xgboost>=1.5.0
-imbalanced-learn>=0.8.0
+# ============================================================================
+# DEEP LEARNING FRAMEWORKS
+# ============================================================================
+# PyTorch (with CUDA support for GPU training)
+torch>=2.0.0
+torchvision>=0.15.0
 
-# Visualization (if needed later)
-matplotlib>=3.4.0
-seaborn>=0.11.0
+# TensorFlow (with GPU support)
+tensorflow>=2.13.0
 
-# Utilities
-tqdm>=4.62.0
-requests>=2.25.0
-joblib>=1.1.0
+# ============================================================================
+# MACHINE LEARNING
+# ============================================================================
+lightgbm>=4.0.0
+xgboost>=2.0.0
+imbalanced-learn>=0.11.0
 
-# System Monitoring (optional but recommended)
-psutil>=5.8.0
-GPUtil>=1.4.0
+# ============================================================================
+# VISUALIZATION
+# ============================================================================
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# ============================================================================
+# UTILITIES
+# ============================================================================
+tqdm>=4.65.0
+requests>=2.31.0
+joblib>=1.3.0
+
+# ============================================================================
+# SYSTEM MONITORING (optional but recommended)
+# ============================================================================
+psutil>=5.9.0
