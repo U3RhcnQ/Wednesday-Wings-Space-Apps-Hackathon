@@ -130,9 +130,8 @@ Backend/plots/data_quality/*
 !Backend/plots/data_quality/.gitkeep
 
 # Large data files (CSV files over certain size)
-Backend/data/raw/*.csv
-Backend/data/sanitized/*.csv
-Backend/cleaned_datasets/*.csv
+# Ignore all CSV files throughout the project
+*.csv
 
 # Temporary and backup files
 *.tmp
