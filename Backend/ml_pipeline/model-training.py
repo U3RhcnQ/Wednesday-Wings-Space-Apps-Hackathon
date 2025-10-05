@@ -181,22 +181,30 @@ class ExoplanetModelTrainer:
     def load_processed_data(self):
         """Load preprocessed data with validation"""
         try:
-            X = pd.read_csv(self.paths['data_processed'] / 'features_processed.csv').values
+            # Load as DataFrame to preserve feature names for models
+            X_df = pd.read_csv(self.paths['data_processed'] / 'features_processed.csv')
             y = np.load(self.paths['data_processed'] / 'labels_processed.npy')
             feature_names = joblib.load(self.paths['data_processed'] /  'feature_names.joblib')
             
+            # Ensure DataFrame columns match feature_names
+            if list(X_df.columns) != feature_names:
+                print(f"⚠️  Reordering columns to match feature_names")
+                X_df = X_df[feature_names]
+            
             class_dist = Counter(y)
-            print(f"📂 Loaded: {X.shape[0]:,} samples × {X.shape[1]} features | Classes: {dict(class_dist)}")
+            print(f"📂 Loaded: {X_df.shape[0]:,} samples × {X_df.shape[1]} features | Classes: {dict(class_dist)}")
             
             # Store in metadata
             self.metadata['data_info'] = {
-                'feature_matrix_shape': X.shape,
+                'feature_matrix_shape': X_df.shape,
                 'labels_shape': y.shape,
                 'feature_count': len(feature_names),
-                'class_distribution': dict(class_dist)
+                'class_distribution': dict(class_dist),
+                'feature_names': feature_names
             }
+            self.feature_names = feature_names  # Store for later use
             
-            return X, y, feature_names
+            return X_df, y, feature_names
             
         except Exception as e:
             print(f"❌ Error loading data: {e}")
@@ -249,10 +257,10 @@ class ExoplanetModelTrainer:
             'XGBoost': XGBClassifier(
                 objective='binary:logistic', n_estimators=2000, learning_rate=0.05,
                 max_depth=20, min_child_weight=2, subsample=0.8, colsample_bytree=0.8,
-                tree_method='hist',  # H100 GPU acceleration
-                device='cuda:0',  # H100 GPU device
+                tree_method='hist',  # CPU-compatible histogram method (GPU auto-detected)
                 n_jobs=-1, random_state=42, verbosity=1,
-                max_bin=256  # H100 optimized
+                max_bin=256,  # H100 optimized
+                enable_categorical=False  # Ensure compatibility
             ),
             'Gradient Boosting': GradientBoostingClassifier(
                 n_estimators=1200, learning_rate=0.05, max_depth=12,
@@ -707,6 +715,16 @@ class ExoplanetModelTrainer:
         
         # Load data
         X, y, feature_names = self.load_processed_data()
+        
+        # Save feature metadata for inference
+        feature_metadata_path = 'metadata/feature_metadata.json'
+        with open(feature_metadata_path, 'w') as f:
+            json.dump({
+                'feature_names': feature_names,
+                'feature_count': len(feature_names),
+                'creation_timestamp': datetime.now().isoformat()
+            }, f, indent=4)
+        print(f"💾 Feature metadata saved: {feature_metadata_path}")
         
         # Create splits
         X_train, X_val, X_test, y_train, y_val, y_test = self.create_data_splits(X, y)

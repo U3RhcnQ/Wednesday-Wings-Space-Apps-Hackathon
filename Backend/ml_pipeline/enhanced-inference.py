@@ -1,6 +1,15 @@
 # Enhanced Inference Script for Exoplanet Detection
 # NASA Space Apps Challenge 2025
 # Load saved models and make predictions with comprehensive metadata support
+#
+# NOTE: This script requires the following files to be present:
+#   - models/BEST_MODEL.joblib (trained model)
+#   - metadata/final_scaler.pkl (feature scaler from training)
+#   - metadata/stellar_imputer.pkl (stellar feature imputer)
+#   - metadata/planetary_imputer.pkl (planetary feature imputer)
+#   - metadata/other_imputer.pkl (other feature imputer)
+#
+# For more comprehensive validation, use real-world-model-test.py
 
 import numpy as np
 import pandas as pd
@@ -40,13 +49,26 @@ class ExoplanetDetector:
             print(f"   ❌ Error loading model: {e}")
             raise
         
-        # Load preprocessing objects
+        # Load preprocessing objects (updated paths)
         try:
-            self.scaler = joblib.load('models/feature_scaler.joblib')
-            self.imputer = joblib.load('models/feature_imputer.joblib')
-            self.feature_names = joblib.load('data/feature_names.joblib')
+            self.scaler = joblib.load('metadata/final_scaler.pkl')
+            self.stellar_imputer = joblib.load('metadata/stellar_imputer.pkl')
+            self.planetary_imputer = joblib.load('metadata/planetary_imputer.pkl')
+            self.other_imputer = joblib.load('metadata/other_imputer.pkl')
+            
+            # Try to load feature names from metadata
+            try:
+                with open('metadata/feature_metadata.json', 'r') as f:
+                    feature_metadata = json.load(f)
+                    self.feature_names = feature_metadata.get('feature_names', [])
+            except:
+                # If no feature metadata, we'll try to infer from scaler
+                self.feature_names = []
+                print(f"   ⚠️  Feature names not found, will use dynamic feature detection")
+            
             print(f"   ✅ Preprocessing objects loaded")
-            print(f"   🔢 Expected features: {len(self.feature_names)}")
+            if self.feature_names:
+                print(f"   🔢 Expected features: {len(self.feature_names)}")
         except Exception as e:
             print(f"   ❌ Error loading preprocessing objects: {e}")
             raise
@@ -90,11 +112,69 @@ class ExoplanetDetector:
         if len(X.shape) == 1:
             X = X.reshape(1, -1)
         
-        # Impute missing values
-        X_imputed = self.imputer.transform(X)
+        # Convert to DataFrame if numpy array
+        if isinstance(X, np.ndarray):
+            if self.feature_names:
+                X_df = pd.DataFrame(X, columns=self.feature_names)
+            else:
+                # Create generic column names
+                X_df = pd.DataFrame(X, columns=[f'feature_{i}' for i in range(X.shape[1])])
+        else:
+            X_df = X.copy()
         
-        # Scale features  
-        X_scaled = self.scaler.transform(X_imputed)
+        # Separate feature types (matching training pipeline)
+        feature_cols = list(X_df.columns)
+        
+        stellar_features = [col for col in feature_cols if 
+                           any(x in col for x in ['stellar', 'magnitude'])]
+        planetary_features = [col for col in feature_cols if 
+                             any(x in col for x in ['planet', 'orbital', 'transit', 
+                                                    'equilibrium', 'semi_major', 
+                                                    'inclination', 'period', 'duration'])]
+        error_features = [col for col in feature_cols if 'err' in col]
+        other_features = [col for col in feature_cols if 
+                         col not in stellar_features + planetary_features + error_features]
+        
+        # Apply imputation by feature type
+        X_imputed = X_df.copy()
+        
+        # Stellar features
+        if len(stellar_features) > 0:
+            stellar_features_valid = [col for col in stellar_features if X_df[col].notna().any()]
+            if len(stellar_features_valid) > 0:
+                X_imputed[stellar_features_valid] = self.stellar_imputer.transform(X_df[stellar_features_valid])
+            all_nan_cols = [col for col in stellar_features if col not in stellar_features_valid]
+            if all_nan_cols:
+                X_imputed[all_nan_cols] = 0
+        
+        # Planetary features
+        if len(planetary_features) > 0:
+            planetary_features_valid = [col for col in planetary_features if X_df[col].notna().any()]
+            if len(planetary_features_valid) > 0:
+                X_imputed[planetary_features_valid] = self.planetary_imputer.transform(X_df[planetary_features_valid])
+            all_nan_cols = [col for col in planetary_features if col not in planetary_features_valid]
+            if all_nan_cols:
+                X_imputed[all_nan_cols] = 0
+        
+        # Error features - zero imputation
+        if len(error_features) > 0:
+            X_imputed[error_features] = X_df[error_features].fillna(0)
+        
+        # Other features
+        if len(other_features) > 0:
+            other_features_valid = [col for col in other_features if X_df[col].notna().any()]
+            if len(other_features_valid) > 0:
+                X_imputed[other_features_valid] = self.other_imputer.transform(X_df[other_features_valid])
+            all_nan_cols = [col for col in other_features if col not in other_features_valid]
+            if all_nan_cols:
+                X_imputed[all_nan_cols] = 0
+        
+        # Scale features - return as DataFrame to preserve feature names
+        X_scaled = pd.DataFrame(
+            self.scaler.transform(X_imputed),
+            columns=X_imputed.columns,
+            index=X_imputed.index
+        )
         
         return X_scaled
     
@@ -461,10 +541,14 @@ def main():
         
     except Exception as e:
         print(f"\\n❌ Inference failed: {str(e)}")
-        print("Please ensure you have:")
-        print("   1. Trained models in ./models/")
-        print("   2. Preprocessing objects (scaler, imputer)")
-        print("   3. Feature names file")
+        print("\\nPlease ensure you have:")
+        print("   1. Trained model: models/BEST_MODEL.joblib")
+        print("   2. Scaler: metadata/final_scaler.pkl")
+        print("   3. Imputers: metadata/stellar_imputer.pkl")
+        print("                metadata/planetary_imputer.pkl")
+        print("                metadata/other_imputer.pkl")
+        print("\\n💡 Tip: Run the training pipeline first to generate these files")
+        print("   Or use real-world-model-test.py for comprehensive validation")
         raise
 
 if __name__ == "__main__":

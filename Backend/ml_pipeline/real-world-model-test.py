@@ -41,11 +41,12 @@ RUN_TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 RUN_DIR = current_dir / 'plots' / 'realworld' / f'run_{RUN_TIMESTAMP}'
 
 PROJECT_PATHS = {
-    'data_unseen': backend_dir / 'data' / 'unseen',
+    'data_unseen_good': backend_dir / 'data' / 'unseen' / 'good',
+    'data_unseen_bad': backend_dir / 'data' / 'unseen' / 'bad',
     'models': current_dir / 'models',
     'metadata': backend_dir / 'metadata',
     'plots': RUN_DIR,
-    'results': RUN_DIR / 'results',
+    'results': RUN_DIR,
     'logs': backend_dir / 'logs'
 }
 
@@ -156,16 +157,27 @@ logger = setup_logging()
 # DATA LOADING
 # ============================================================================
 
-def load_unseen_data():
-    """Load unseen data from all three datasets (data that didn't pass sanitization)"""
+def load_unseen_data(data_type='good'):
+    """Load unseen data from all three datasets
+    
+    Args:
+        data_type: 'good' for test set (30% holdout) or 'bad' for rejected data
+    """
+    data_path_key = f'data_unseen_{data_type}'
+    data_path = PROJECT_PATHS[data_path_key]
+    
     logger.info("=" * 80)
-    logger.info("LOADING UNSEEN DATA (Filtered Out During Sanitization)")
+    if data_type == 'good':
+        logger.info("LOADING GOOD UNSEEN DATA (30% Test Set - Never Seen During Training)")
+    else:
+        logger.info("LOADING BAD UNSEEN DATA (Rejected During Sanitization)")
+    logger.info(f"Source: {data_path}")
     logger.info("=" * 80)
     
     datasets = {}
     
     for dataset_name in ['k2', 'koi', 'toi']:
-        file_path = PROJECT_PATHS['data_unseen'] / f'{dataset_name}_unseen.csv'
+        file_path = data_path / f'{dataset_name}_unseen.csv'
         
         if not file_path.exists():
             logger.warning(f"{dataset_name.upper()} unseen file not found at {file_path}")
@@ -695,30 +707,30 @@ def plot_dataset_performance(results, X, y, output_path):
 # MAIN PIPELINE
 # ============================================================================
 
-def main():
-    """Main testing pipeline"""
-    logger.info("=" * 80)
-    logger.info("UNSEEN DATA MODEL VALIDATION TEST")
-    logger.info("Testing models on data that was filtered out during sanitization")
-    logger.info("NASA Space Apps Challenge 2025")
-    logger.info("=" * 80)
-    logger.info(f"Run ID: {RUN_TIMESTAMP}")
-    logger.info(f"Output directory: {PROJECT_PATHS['plots']}")
+def run_test_on_data(data_type='good', models=None):
+    """Run test on either good or bad unseen data
+    
+    Args:
+        data_type: 'good' for test set or 'bad' for rejected data
+        models: Pre-loaded models dict (will load if None)
+    
+    Returns:
+        dict with results and metrics
+    """
+    logger.info("\n" + "=" * 80)
+    logger.info(f"TESTING ON {data_type.upper()} UNSEEN DATA")
     logger.info("=" * 80)
     
     start_time = datetime.now()
     
     try:
         # Step 1: Load unseen data
-        logger.info("\nSTEP 1: Loading unseen data...")
-        combined_df, individual_datasets = load_unseen_data()
+        logger.info(f"\nSTEP 1: Loading {data_type} unseen data...")
+        combined_df, individual_datasets = load_unseen_data(data_type)
         
         if combined_df is None or len(combined_df) == 0:
-            logger.error("No unseen data loaded!")
-            logger.info("\nTo generate unseen data, run:")
-            logger.info("  cd Backend/sanitization")
-            logger.info("  python run_all_sanitizers.py")
-            return
+            logger.error(f"No {data_type} unseen data loaded!")
+            return None
         
         # Step 2: Feature engineering
         logger.info("\nSTEP 2: Creating engineered features...")
@@ -734,7 +746,7 @@ def main():
         
         if df_normalized is None:
             logger.error("Normalization failed!")
-            return
+            return None
         
         # Prepare data for models
         y = df_normalized['is_confirmed'].values
@@ -745,13 +757,17 @@ def main():
         logger.info(f"Confirmed: {y.sum()} ({y.sum()/len(y)*100:.1f}%)")
         logger.info(f"Candidates: {len(y)-y.sum()} ({(len(y)-y.sum())/len(y)*100:.1f}%)")
         
-        # Step 5: Load models
-        logger.info("\nSTEP 5: Loading trained models...")
-        models = load_all_models()
-        
-        if len(models) == 0:
-            logger.error("No models loaded!")
-            return
+        # Step 5: Load models (or use provided models)
+        if models is None:
+            logger.info("\nSTEP 5: Loading trained models...")
+            models = load_all_models()
+            
+            if len(models) == 0:
+                logger.error("No models loaded!")
+                return None
+        else:
+            logger.info("\nSTEP 5: Using pre-loaded models...")
+            logger.info(f"Models: {len(models)}")
         
         # Step 6: Evaluate all models
         logger.info("\nSTEP 6: Evaluating models...")
@@ -763,30 +779,36 @@ def main():
             if metrics:
                 results[model_name] = metrics
         
+        # Create subfolder for this data type
+        output_dir = PROJECT_PATHS['plots'] / data_type
+        output_dir.mkdir(parents=True, exist_ok=True)
+        results_dir = output_dir / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
         # Step 7: Generate visualizations
         logger.info("\nSTEP 7: Generating visualizations...")
         logger.info("=" * 80)
         
         plot_confusion_matrices(
             results, 
-            PROJECT_PATHS['plots'] / '1_confusion_matrices.png'
+            output_dir / '1_confusion_matrices.png'
         )
         
         plot_roc_curves(
             results, 
             y,
-            PROJECT_PATHS['plots'] / '2_roc_curves.png'
+            output_dir / '2_roc_curves.png'
         )
         
         plot_precision_recall_curves(
             results, 
             y,
-            PROJECT_PATHS['plots'] / '3_precision_recall_curves.png'
+            output_dir / '3_precision_recall_curves.png'
         )
         
         plot_model_comparison(
             results,
-            PROJECT_PATHS['plots'] / '4_model_comparison.png'
+            output_dir / '4_model_comparison.png'
         )
         
         # Add dataset source back for dataset performance plot
@@ -797,7 +819,7 @@ def main():
             results,
             X_with_source,
             y,
-            PROJECT_PATHS['plots'] / '5_dataset_performance.png'
+            output_dir / '5_dataset_performance.png'
         )
         
         # Step 8: Save results
@@ -820,17 +842,18 @@ def main():
         
         summary_df = pd.DataFrame(summary_data)
         summary_df = summary_df.sort_values('f1', ascending=False)
-        summary_path = PROJECT_PATHS['results'] / 'unseen_data_performance_summary.csv'
+        summary_path = results_dir / f'{data_type}_performance_summary.csv'
         summary_df.to_csv(summary_path, index=False)
         logger.info(f"✓ Saved performance summary to {summary_path}")
         
         # Save detailed report
         report = {
-            'test_type': 'unseen_data_validation',
+            'test_type': f'{data_type}_unseen_data_validation',
+            'data_quality': 'clean_holdout' if data_type == 'good' else 'rejected',
             'run_id': RUN_TIMESTAMP,
             'test_timestamp': datetime.now().isoformat(),
             'processing_time_seconds': (datetime.now() - start_time).total_seconds(),
-            'test_data_shape': X.shape,
+            'test_data_shape': list(X.shape),
             'total_samples': len(y),
             'confirmed_count': int(y.sum()),
             'candidate_count': int(len(y) - y.sum()),
@@ -853,7 +876,7 @@ def main():
             }
         }
         
-        report_path = PROJECT_PATHS['results'] / 'unseen_data_test_report.json'
+        report_path = results_dir / f'{data_type}_test_report.json'
         with open(report_path, 'w') as f:
             json.dump(report, f, indent=2)
         logger.info(f"✓ Saved detailed report to {report_path}")
@@ -881,14 +904,18 @@ def main():
         
         models_table = create_markdown_table(summary_df)
         
-        # Create a README for this run
-        readme_content = f"""# Unseen Data Validation Test - Run {RUN_TIMESTAMP}
+        # Create a README for this subfolder
+        data_type_desc = "30% Test Set (Clean Holdout)" if data_type == 'good' else "Rejected Data (Failed Sanitization)"
+        readme_content = f"""# {data_type.upper()} Unseen Data Test - Run {RUN_TIMESTAMP}
 
 ## Overview
-This test evaluates trained models on **unseen data** - data that was filtered out during the sanitization process and never used for training.
+This test evaluates trained models on **{data_type} unseen data** - {data_type_desc}.
 
 ## Test Date
 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+## Data Type
+**{data_type.upper()}**: {'Clean data held out from training (proper validation set)' if data_type == 'good' else 'Data rejected during sanitization (robustness check)'}
 
 ## Data Summary
 - **Total samples**: {len(y):,}
@@ -912,31 +939,26 @@ This test evaluates trained models on **unseen data** - data that was filtered o
 5. **5_dataset_performance.png** - Performance breakdown by dataset
 
 ## Results Directory
-- **unseen_data_performance_summary.csv** - Metrics summary table
-- **unseen_data_test_report.json** - Detailed results in JSON format
+- **{data_type}_performance_summary.csv** - Metrics summary table
+- **{data_type}_test_report.json** - Detailed results in JSON format
 
 ## Notes
-This data represents edge cases and problematic records that didn't pass sanitization checks.
-Models' performance on this data indicates their robustness to:
-- Duplicates
-- Invalid dispositions
-- Out-of-range values
-- High missing data
+{'This is your TRUE VALIDATION PERFORMANCE on clean, unseen data.' if data_type == 'good' else 'This tests model robustness on problematic data (duplicates, invalid values, etc).'}
+{'Report these metrics as your model performance!' if data_type == 'good' else 'Models should perform poorly here - it validates data quality matters.'}
 """
         
-        readme_path = PROJECT_PATHS['plots'] / 'README.md'
+        readme_path = output_dir / 'README.md'
         with open(readme_path, 'w') as f:
             f.write(readme_content)
         logger.info(f"✓ Saved README to {readme_path}")
         
-        # Final summary
+        # Summary
         logger.info("\n" + "=" * 80)
-        logger.info("UNSEEN DATA VALIDATION TEST COMPLETE")
+        logger.info(f"{data_type.upper()} DATA TEST COMPLETE")
         logger.info("=" * 80)
-        logger.info(f"Run ID: {RUN_TIMESTAMP}")
         logger.info(f"Processing time: {(datetime.now() - start_time).total_seconds():.2f} seconds")
-        logger.info(f"Tested {len(results)} models on {len(y)} unseen samples")
-        logger.info(f"\nBest performing model on unseen data (by F1):")
+        logger.info(f"Tested {len(results)} models on {len(y)} samples")
+        logger.info(f"\nBest model (by F1):")
         best_model = summary_df.iloc[0]
         logger.info(f"  Model: {best_model['model_name']}")
         logger.info(f"  Accuracy: {best_model['accuracy']:.4f}")
@@ -944,16 +966,226 @@ Models' performance on this data indicates their robustness to:
         logger.info(f"  Recall: {best_model['recall']:.4f}")
         logger.info(f"  F1: {best_model['f1']:.4f}")
         logger.info(f"  ROC-AUC: {best_model['roc_auc']:.4f}")
-        logger.info(f"\n📁 All results saved to: {PROJECT_PATHS['plots']}")
-        logger.info(f"   - Plots: {PROJECT_PATHS['plots']}")
-        logger.info(f"   - Results: {PROJECT_PATHS['results']}")
-        logger.info(f"   - README: {PROJECT_PATHS['plots'] / 'README.md'}")
+        logger.info("=" * 80)
+        
+        # Return results for comparison
+        return {
+            'data_type': data_type,
+            'summary_df': summary_df,
+            'results': results,
+            'n_samples': len(y),
+            'n_confirmed': int(y.sum()),
+            'best_model': best_model,
+            'output_dir': output_dir
+        }
+        
+    except Exception as e:
+        logger.error(f"Testing on {data_type} data failed with error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+
+def main():
+    """Main testing pipeline - tests on both good and bad unseen data"""
+    logger.info("=" * 80)
+    logger.info("COMPREHENSIVE UNSEEN DATA MODEL VALIDATION")
+    logger.info("Testing models on GOOD (30% holdout) and BAD (rejected) data")
+    logger.info("NASA Space Apps Challenge 2025")
+    logger.info("=" * 80)
+    logger.info(f"Run ID: {RUN_TIMESTAMP}")
+    logger.info(f"Output directory: {PROJECT_PATHS['plots']}")
+    logger.info("=" * 80)
+    
+    overall_start = datetime.now()
+    
+    try:
+        # Load models once (reuse for both tests)
+        logger.info("\nLoading trained models...")
+        logger.info("=" * 80)
+        models = load_all_models()
+        
+        if len(models) == 0:
+            logger.error("No models loaded! Cannot proceed.")
+            logger.info("\nTo train models, run:")
+            logger.info("  cd Backend/ml_pipeline")
+            logger.info("  python model-training.py")
+            return
+        
+        logger.info(f"✓ Loaded {len(models)} models")
+        logger.info("=" * 80)
+        
+        # Test on GOOD unseen data (30% holdout)
+        logger.info("\n" + "🎯" * 40)
+        logger.info("PART 1: TESTING ON GOOD UNSEEN DATA (30% Test Set)")
+        logger.info("This is your TRUE VALIDATION PERFORMANCE")
+        logger.info("🎯" * 40)
+        
+        good_results = run_test_on_data('good', models=models)
+        
+        # Test on BAD unseen data (rejected)
+        logger.info("\n" + "⚠️" * 40)
+        logger.info("PART 2: TESTING ON BAD UNSEEN DATA (Rejected Data)")
+        logger.info("This tests model robustness to problematic data")
+        logger.info("⚠️" * 40)
+        
+        bad_results = run_test_on_data('bad', models=models)
+        
+        # Create overall summary
+        logger.info("\n" + "=" * 80)
+        logger.info("COMPREHENSIVE VALIDATION COMPLETE")
+        logger.info("=" * 80)
+        logger.info(f"Total processing time: {(datetime.now() - overall_start).total_seconds():.2f} seconds")
+        
+        if good_results:
+            logger.info(f"\n✅ GOOD DATA (30% Holdout - TRUE PERFORMANCE):")
+            logger.info(f"   Samples: {good_results['n_samples']}")
+            logger.info(f"   Best Model: {good_results['best_model']['model_name']}")
+            logger.info(f"   F1 Score: {good_results['best_model']['f1']:.4f}")
+            logger.info(f"   Precision: {good_results['best_model']['precision']:.4f}")
+            logger.info(f"   Recall: {good_results['best_model']['recall']:.4f}")
+            logger.info(f"   📁 Results: {good_results['output_dir']}")
+        
+        if bad_results:
+            logger.info(f"\n⚠️ BAD DATA (Rejected - Robustness Check):")
+            logger.info(f"   Samples: {bad_results['n_samples']}")
+            logger.info(f"   Best Model: {bad_results['best_model']['model_name']}")
+            logger.info(f"   F1 Score: {bad_results['best_model']['f1']:.4f}")
+            logger.info(f"   Precision: {bad_results['best_model']['precision']:.4f}")
+            logger.info(f"   Recall: {bad_results['best_model']['recall']:.4f}")
+            logger.info(f"   📁 Results: {bad_results['output_dir']}")
+        
+        # Create overall README
+        create_overall_readme(good_results, bad_results)
+        
+        logger.info(f"\n📁 ALL RESULTS SAVED TO: {PROJECT_PATHS['plots']}")
+        logger.info(f"   ├─ good/ - Performance on 30% test set (TRUE metrics)")
+        logger.info(f"   └─ bad/  - Performance on rejected data (robustness)")
         logger.info("=" * 80)
         
     except Exception as e:
-        logger.error(f"Testing failed with error: {e}")
+        logger.error(f"Overall testing failed with error: {e}")
         import traceback
         logger.error(traceback.format_exc())
+
+
+def create_overall_readme(good_results, bad_results):
+    """Create overall README comparing good vs bad performance"""
+    readme_content = f"""# Comprehensive Model Validation - Run {RUN_TIMESTAMP}
+
+## Overview
+This validation tests models on **two types of unseen data**:
+1. **GOOD** - 30% clean holdout set (true validation performance)
+2. **BAD** - Rejected data from sanitization (robustness check)
+
+## Test Date
+{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+---
+
+"""
+    
+    if good_results:
+        readme_content += f"""## ✅ GOOD Unseen Data Results (TRUE PERFORMANCE)
+
+**Data**: 30% of clean data, held out from training (proper test set)  
+**Samples**: {good_results['n_samples']:,} ({good_results['n_confirmed']} confirmed)
+
+### Best Model: {good_results['best_model']['model_name']}
+- **F1 Score**: {good_results['best_model']['f1']:.4f}
+- **Precision**: {good_results['best_model']['precision']:.4f}
+- **Recall**: {good_results['best_model']['recall']:.4f}
+- **ROC-AUC**: {good_results['best_model']['roc_auc']:.4f}
+
+**💡 These are your TRUE validation metrics - report these!**
+
+---
+
+"""
+    
+    if bad_results:
+        readme_content += f"""## ⚠️ BAD Unseen Data Results (ROBUSTNESS CHECK)
+
+**Data**: Rejected during sanitization (duplicates, invalid values, etc.)  
+**Samples**: {bad_results['n_samples']:,} ({bad_results['n_confirmed']} confirmed)
+
+### Best Model: {bad_results['best_model']['model_name']}
+- **F1 Score**: {bad_results['best_model']['f1']:.4f}
+- **Precision**: {bad_results['best_model']['precision']:.4f}
+- **Recall**: {bad_results['best_model']['recall']:.4f}
+- **ROC-AUC**: {bad_results['best_model']['roc_auc']:.4f}
+
+**💡 Low performance here is GOOD - proves sanitization matters!**
+
+---
+
+"""
+    
+    if good_results and bad_results:
+        f1_drop = good_results['best_model']['f1'] - bad_results['best_model']['f1']
+        readme_content += f"""## 📊 Performance Comparison
+
+| Metric | GOOD (Test) | BAD (Rejected) | Difference |
+|--------|-------------|----------------|------------|
+| F1 Score | {good_results['best_model']['f1']:.4f} | {bad_results['best_model']['f1']:.4f} | {f1_drop:.4f} |
+| Precision | {good_results['best_model']['precision']:.4f} | {bad_results['best_model']['precision']:.4f} | {good_results['best_model']['precision'] - bad_results['best_model']['precision']:.4f} |
+| Recall | {good_results['best_model']['recall']:.4f} | {bad_results['best_model']['recall']:.4f} | {good_results['best_model']['recall'] - bad_results['best_model']['recall']:.4f} |
+
+**Performance Gap**: {f1_drop:.4f} F1 points ({f1_drop/good_results['best_model']['f1']*100:.1f}% drop)
+
+This gap proves that **data quality is critical** to model performance!
+
+---
+
+"""
+    
+    readme_content += """## 📁 Directory Structure
+
+```
+run_TIMESTAMP/
+├── good/                           # 30% Test Set Results
+│   ├── 1_confusion_matrices.png
+│   ├── 2_roc_curves.png
+│   ├── 3_precision_recall_curves.png
+│   ├── 4_model_comparison.png
+│   ├── 5_dataset_performance.png
+│   ├── results/
+│   │   ├── good_performance_summary.csv
+│   │   └── good_test_report.json
+│   └── README.md
+│
+├── bad/                            # Rejected Data Results
+│   ├── 1_confusion_matrices.png
+│   ├── 2_roc_curves.png
+│   ├── 3_precision_recall_curves.png
+│   ├── 4_model_comparison.png
+│   ├── 5_dataset_performance.png
+│   ├── results/
+│   │   ├── bad_performance_summary.csv
+│   │   └── bad_test_report.json
+│   └── README.md
+│
+└── README.md                       # This file
+```
+
+## 🎯 Key Takeaways
+
+1. **Report GOOD data metrics** as your model performance
+2. **Low BAD data metrics** validate sanitization importance
+3. **Performance gap** proves data quality matters
+4. **Proper validation** prevents data leakage
+
+---
+
+*Generated by real-world-model-test.py*  
+*Tests both clean holdout and rejected data for comprehensive validation*
+"""
+    
+    readme_path = PROJECT_PATHS['plots'] / 'README.md'
+    with open(readme_path, 'w') as f:
+        f.write(readme_content)
+    
+    logger.info(f"✓ Saved overall README to {readme_path}")
 
 # ============================================================================
 # ENTRY POINT
@@ -961,8 +1193,8 @@ Models' performance on this data indicates their robustness to:
 
 if __name__ == "__main__":
     print("\n" + "=" * 80)
-    print("UNSEEN DATA MODEL VALIDATION TEST")
-    print("Testing models on data filtered out during sanitization")
+    print("COMPREHENSIVE UNSEEN DATA MODEL VALIDATION")
+    print("Testing models on GOOD (30% holdout) and BAD (rejected) data")
     print("NASA Space Apps Challenge 2025")
     print("=" * 80)
     print(f"Run ID: {RUN_TIMESTAMP}")
@@ -970,10 +1202,10 @@ if __name__ == "__main__":
     
     main()
     
-    print("\n✓ Validation test completed!")
+    print("\n✓ Comprehensive validation completed!")
     print(f"  📁 Output directory: {PROJECT_PATHS['plots']}")
-    print(f"  📊 Plots: {PROJECT_PATHS['plots']}")
-    print(f"  📈 Results: {PROJECT_PATHS['results']}")
-    print(f"  📄 README: {PROJECT_PATHS['plots'] / 'README.md'}")
-    print("\n💡 Each run creates a new timestamped directory for easy comparison!")
+    print(f"  📊 Good data results: {PROJECT_PATHS['plots'] / 'good'}")
+    print(f"  ⚠️  Bad data results: {PROJECT_PATHS['plots'] / 'bad'}")
+    print(f"  📄 Overall README: {PROJECT_PATHS['plots'] / 'README.md'}")
+    print("\n💡 Tests both clean holdout (30%) and rejected data in one run!")
 
