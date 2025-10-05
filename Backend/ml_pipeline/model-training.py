@@ -18,7 +18,7 @@ import os
 import joblib
 import warnings
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import Counter
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.ensemble import (RandomForestClassifier, GradientBoostingClassifier, 
@@ -40,6 +40,7 @@ import psutil
 import GPUtil
 
 warnings.filterwarnings('ignore')
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow warnings
 
 # Dynamic path configuration
 PROJECT_PATHS = {
@@ -59,6 +60,46 @@ def ensure_dir(name):
         path.mkdir(parents=True, exist_ok=True)
         return path
     return None
+
+def format_time(seconds):
+    """Format seconds into human readable string"""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    elif seconds < 3600:
+        return f"{seconds/60:.1f}m"
+    else:
+        return f"{seconds/3600:.1f}h"
+
+class ProgressTracker:
+    """Clean progress tracking with time estimates"""
+    def __init__(self, total_steps, desc="Processing"):
+        self.total_steps = total_steps
+        self.current_step = 0
+        self.desc = desc
+        self.start_time = time.time()
+        self.step_times = []
+        
+    def update(self, step_name, step_time=None):
+        """Update progress with step information"""
+        self.current_step += 1
+        if step_time:
+            self.step_times.append(step_time)
+        
+        elapsed = time.time() - self.start_time
+        if len(self.step_times) > 0:
+            avg_time = np.mean(self.step_times)
+            remaining_steps = self.total_steps - self.current_step
+            eta = avg_time * remaining_steps
+            print(f"[{self.current_step}/{self.total_steps}] {step_name} | "
+                  f"Elapsed: {format_time(elapsed)} | ETA: {format_time(eta)}")
+        else:
+            print(f"[{self.current_step}/{self.total_steps}] {step_name} | "
+                  f"Elapsed: {format_time(elapsed)}")
+    
+    def complete(self):
+        """Mark completion"""
+        total_time = time.time() - self.start_time
+        print(f"✅ {self.desc} complete in {format_time(total_time)}\n")
 
 class ExoplanetModelTrainer:
     """
@@ -87,21 +128,13 @@ class ExoplanetModelTrainer:
         plt.style.use('default')
         sns.set_palette("husl")
         
-        print("=" * 80)
-        print("EXOPLANET DETECTION PIPELINE - MODEL TRAINING")
-        print("=" * 80)
-        print(f"Pipeline Version: {self.metadata['pipeline_version']}")
-        print(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("=" * 80)
-        
-        # Display system info
-        print(f"🖥️  System Configuration:")
-        print(f"   - CPU Cores: {self.metadata['system_info']['cpu_cores']}")
-        print(f"   - RAM: {self.metadata['system_info']['ram_gb']:.1f} GB")
-        print(f"   - GPUs: {len(self.metadata['system_info']['gpus'])}")
-        for i, gpu in enumerate(self.metadata['system_info']['gpus']):
-            print(f"     GPU {i}: {gpu['name']} ({gpu['memory_mb']} MB)")
-        print("=" * 80)
+        # Compact initialization message
+        system_info = self.metadata['system_info']
+        gpu_info = system_info['gpus'][0] if system_info['gpus'] else {'name': 'None', 'memory_mb': 0}
+        print(f"\n{'='*80}")
+        print(f"🚀 EXOPLANET MODEL TRAINING | v{self.metadata['pipeline_version']} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"💻 System: {system_info['cpu_cores']} cores | {system_info['ram_gb']:.1f}GB RAM | GPU: {gpu_info['name']}")
+        print(f"{'='*80}\n")
     
     def _get_system_info(self):
         """Collect system information for metadata"""
@@ -126,54 +159,37 @@ class ExoplanetModelTrainer:
     
     def load_processed_data(self):
         """Load preprocessed data with validation"""
-        print("\n📂 Loading preprocessed data...")
-        
         try:
-            # Load features
             X = pd.read_csv(self.paths['data_processed'] / 'features_processed.csv').values
-            
-            # Load labels
             y = np.load(self.paths['data_processed'] / 'labels_processed.npy')
-            
-            # Load feature names
             feature_names = joblib.load(self.paths['data_processed'] /  'feature_names.joblib')
             
-            print(f"   ✅ Data loaded successfully:")
-            print(f"      - Features: {X.shape}")
-            print(f"      - Labels: {y.shape}")
-            print(f"      - Feature names: {len(feature_names)}")
-            print(f"      - Class distribution: {Counter(y)}")
+            class_dist = Counter(y)
+            print(f"📂 Loaded: {X.shape[0]:,} samples × {X.shape[1]} features | Classes: {dict(class_dist)}")
             
             # Store in metadata
             self.metadata['data_info'] = {
                 'feature_matrix_shape': X.shape,
                 'labels_shape': y.shape,
                 'feature_count': len(feature_names),
-                'class_distribution': dict(Counter(y))
+                'class_distribution': dict(class_dist)
             }
             
             return X, y, feature_names
             
         except Exception as e:
             print(f"❌ Error loading data: {e}")
-            print("   Please run preprocessing.py first!")
             raise
     
     def create_data_splits(self, X, y):
         """Create train/validation/test splits with metadata tracking"""
-        print("\n✂️  Creating data splits...")
-        
-        # First split: train+val vs test (85% vs 15%)
         X_train_val, X_test, y_train_val, y_test = train_test_split(
             X, y, test_size=0.15, random_state=42, stratify=y
         )
-        
-        # Second split: train vs val (85% vs 15% of remaining)
         X_train, X_val, y_train, y_val = train_test_split(
             X_train_val, y_train_val, test_size=0.15, random_state=42, stratify=y_train_val
         )
         
-        # Store split information
         split_info = {
             'train_size': X_train.shape[0],
             'val_size': X_val.shape[0], 
@@ -184,92 +200,46 @@ class ExoplanetModelTrainer:
             'split_random_state': 42,
             'stratified': True
         }
-        
         self.metadata['data_splits'] = split_info
         
-        print(f"   ✅ Data splits created:")
-        print(f"      - Training: {X_train.shape[0]:,} samples")
-        print(f"      - Validation: {X_val.shape[0]:,} samples") 
-        print(f"      - Test: {X_test.shape[0]:,} samples")
+        print(f"✂️  Split: Train {X_train.shape[0]:,} | Val {X_val.shape[0]:,} | Test {X_test.shape[0]:,}")
         
         return X_train, X_val, X_test, y_train, y_val, y_test
     
     def initialize_models(self):
         """Initialize models with H100 GPU optimization"""
-        print("\n🤖 Initializing ML models with GPU optimization...")
-        
         models = {
             'Random Forest': RandomForestClassifier(
-                n_estimators=1500,
-                max_depth=35,
-                min_samples_split=4,
-                min_samples_leaf=2,
-                max_features='sqrt',
-                n_jobs=-1,
-                random_state=42,
-                verbose=0  # Reduced verbosity for cleaner output
+                n_estimators=1500, max_depth=35, min_samples_split=4, min_samples_leaf=2,
+                max_features='sqrt', n_jobs=-1, random_state=42, verbose=0
             ),
-            
             'Extra Trees': ExtraTreesClassifier(
-                n_estimators=1500,
-                max_depth=35,
-                min_samples_split=4,
-                min_samples_leaf=2,
-                max_features='sqrt',
-                n_jobs=-1,
-                random_state=42,
-                verbose=0
+                n_estimators=1500, max_depth=35, min_samples_split=4, min_samples_leaf=2,
+                max_features='sqrt', n_jobs=-1, random_state=42, verbose=0
             ),
-            
             'LightGBM': LGBMClassifier(
-                objective='binary',
-                n_estimators=2000,
-                learning_rate=0.05,
-                max_depth=25,
-                num_leaves=60,
-                min_child_samples=15,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                n_jobs=-1,
-                random_state=42,
-                verbose=-1,
-                device='gpu',  # GPU acceleration
-                gpu_platform_id=0,
-                gpu_device_id=0,
+                objective='binary', n_estimators=2000, learning_rate=0.05, max_depth=25,
+                num_leaves=60, min_child_samples=15, subsample=0.8, colsample_bytree=0.8,
+                n_jobs=-1, random_state=42, verbose=-1,
+                device='gpu', gpu_platform_id=0, gpu_device_id=0,  # H100 GPU acceleration
+                max_bin=255,  # H100 optimized
                 force_col_wise=True
             ),
-            
             'XGBoost': XGBClassifier(
-                objective='binary:logistic',
-                n_estimators=2000,
-                learning_rate=0.05,
-                max_depth=20,
-                min_child_weight=2,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                tree_method='gpu_hist',  # GPU acceleration for H100
-                gpu_id=0,
-                n_jobs=-1,
-                random_state=42,
-                verbosity=0
+                objective='binary:logistic', n_estimators=2000, learning_rate=0.05,
+                max_depth=20, min_child_weight=2, subsample=0.8, colsample_bytree=0.8,
+                tree_method='gpu_hist',  # H100 GPU acceleration
+                predictor='gpu_predictor',  # H100 optimized inference
+                gpu_id=0, n_jobs=-1, random_state=42, verbosity=0,
+                max_bin=256  # H100 optimized
             ),
-            
             'Gradient Boosting': GradientBoostingClassifier(
-                n_estimators=1200,
-                learning_rate=0.05,
-                max_depth=12,
-                min_samples_split=4,
-                min_samples_leaf=2,
-                subsample=0.85,
-                random_state=42,
-                verbose=0
+                n_estimators=1200, learning_rate=0.05, max_depth=12,
+                min_samples_split=4, min_samples_leaf=2, subsample=0.85,
+                random_state=42, verbose=0
             ),
-            
             'AdaBoost': AdaBoostClassifier(
-                n_estimators=800,
-                learning_rate=0.3,
-                algorithm='SAMME.R',
-                random_state=42
+                n_estimators=800, learning_rate=0.3, algorithm='SAMME.R', random_state=42
             )
         }
         
@@ -278,28 +248,25 @@ class ExoplanetModelTrainer:
         for name, model in models.items():
             self.metadata['model_configurations'][name] = model.get_params()
         
-        print(f"   ✅ Initialized {len(models)} models with optimized hyperparameters")
+        print(f"🤖 Initialized {len(models)} models (H100 GPU-optimized)\n")
         
         return models
     
     def train_individual_models(self, models, X_train, y_train, X_val, y_val, X_test, y_test):
         """Train individual models with comprehensive evaluation"""
-        print("\n" + "="*80)
-        print("TRAINING INDIVIDUAL MODELS")
-        print("="*80)
+        print(f"\n{'='*80}")
+        print(f"🎯 TRAINING {len(models)} INDIVIDUAL MODELS")
+        print(f"{'='*80}\n")
         
         trained_models = {}
         model_performances = {}
+        progress = ProgressTracker(len(models), "Model Training")
         
-        for model_name, model in tqdm(models.items(), desc="Training models"):
-            print(f"\n{'='*60}")
-            print(f"Training: {model_name}")
-            print(f"{'='*60}")
+        for model_name, model in models.items():
+            start_time = time.time()
             
             # Training
-            start_time = time.time()
             model.fit(X_train, y_train)
-            training_time = time.time() - start_time
             
             # Predictions
             y_pred_train = model.predict(X_train)
@@ -313,53 +280,40 @@ class ExoplanetModelTrainer:
             
             # Comprehensive metrics
             metrics = {
-                # Training metrics
                 'train_accuracy': accuracy_score(y_train, y_pred_train),
                 'train_precision': precision_score(y_train, y_pred_train),
                 'train_recall': recall_score(y_train, y_pred_train),
                 'train_f1': f1_score(y_train, y_pred_train),
                 'train_roc_auc': roc_auc_score(y_train, y_pred_proba_train),
-
-                # Validation metrics
                 'val_accuracy': accuracy_score(y_val, y_pred_val),
                 'val_precision': precision_score(y_val, y_pred_val),
                 'val_recall': recall_score(y_val, y_pred_val),
                 'val_f1': f1_score(y_val, y_pred_val),
                 'val_roc_auc': roc_auc_score(y_val, y_pred_proba_val),
-
-                # Test metrics
                 'test_accuracy': accuracy_score(y_test, y_pred_test),
                 'test_precision': precision_score(y_test, y_pred_test),
                 'test_recall': recall_score(y_test, y_pred_test),
                 'test_f1': f1_score(y_test, y_pred_test),
                 'test_roc_auc': roc_auc_score(y_test, y_pred_proba_test),
                 'test_average_precision': average_precision_score(y_test, y_pred_proba_test),
-
-                # Training metadata
-                'training_time_seconds': training_time,
+                'training_time_seconds': time.time() - start_time,
                 'model_params_count': self._count_model_parameters(model)
             }
-
-            # Now compute overfitting score afterwards
             metrics['overfitting_score'] = metrics['train_roc_auc'] - metrics['test_roc_auc']
 
             # Store results
             model_performances[model_name] = metrics
             trained_models[model_name] = model
             
-            # Display results
-            print(f"✅ {model_name} Training Complete!")
-            print(f"   Training Time: {training_time:.2f}s")
-            print(f"   Test ROC-AUC: {metrics['test_roc_auc']:.4f}")
-            print(f"   Test F1-Score: {metrics['test_f1']:.4f}")
-            print(f"   Test Recall: {metrics['test_recall']:.4f}")
-            
-            # Save individual model with metadata
+            # Save model and generate curves (silent operations)
             self._save_model_with_metadata(model, model_name, metrics)
-            
-            # Generate ROC and PR curves
             self._generate_model_curves(model_name, y_test, y_pred_proba_test)
+            
+            # Update progress with results
+            result_str = f"{model_name}: ROC-AUC={metrics['test_roc_auc']:.4f} F1={metrics['test_f1']:.4f} ({format_time(metrics['training_time_seconds'])})"
+            progress.update(result_str, metrics['training_time_seconds'])
         
+        progress.complete()
         self.metadata['training_results'] = model_performances
         
         # Save performance comparison
@@ -382,7 +336,6 @@ class ExoplanetModelTrainer:
     
     def _save_model_with_metadata(self, model, model_name, metrics):
         """Save model with comprehensive metadata"""
-        # Create model-specific metadata
         model_metadata = {
             'model_name': model_name,
             'model_type': type(model).__name__,
@@ -409,18 +362,12 @@ class ExoplanetModelTrainer:
         metadata_path = f"metadata/{metadata_filename}"
         with open(metadata_path, 'w') as f:
             json.dump(model_metadata, f, indent=4, default=str)
-        
-        print(f"   💾 Saved: {model_path}")
-        print(f"   📊 Metadata: {metadata_path}")
     
     def _generate_model_curves(self, model_name, y_true, y_pred_proba):
         """Generate ROC and Precision-Recall curves for individual models"""
-        
-        # Calculate curves
         fpr, tpr, roc_thresholds = roc_curve(y_true, y_pred_proba)
         precision, recall, pr_thresholds = precision_recall_curve(y_true, y_pred_proba)
         
-        # Create figure with subplots
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
         
         # ROC Curve
@@ -438,12 +385,9 @@ class ExoplanetModelTrainer:
         # Precision-Recall Curve
         avg_precision = average_precision_score(y_true, y_pred_proba)
         ax2.plot(recall, precision, linewidth=2, label=f'{model_name} (AP = {avg_precision:.3f})')
-        
-        # Baseline (random classifier)
         baseline = np.sum(y_true) / len(y_true)
         ax2.axhline(y=baseline, color='k', linestyle='--', linewidth=1, 
                    label=f'Random Classifier (AP = {baseline:.3f})')
-        
         ax2.set_xlim([0.0, 1.0])
         ax2.set_ylim([0.0, 1.05])
         ax2.set_xlabel('Recall')
@@ -453,89 +397,77 @@ class ExoplanetModelTrainer:
         ax2.grid(True, alpha=0.3)
         
         plt.tight_layout()
-        
-        # Save plot
         plot_filename = f"plots/{model_name.replace(' ', '_').lower()}_curves.png"
         plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
         plt.close()
-        
-        print(f"   📈 Curves saved: {plot_filename}")
     
     def train_ensemble_models(self, trained_models, X_train, y_train, X_val, y_val, X_test, y_test):
         """Train ensemble models with comprehensive evaluation"""
-        print("\n" + "="*80)
-        print("TRAINING ENSEMBLE MODELS")
-        print("="*80)
+        print(f"\n{'='*80}")
+        print(f"🏆 TRAINING ENSEMBLE MODELS")
+        print(f"{'='*80}\n")
         
         # Select top 4 models for ensemble
         individual_performances = self.metadata['training_results']
         top_models = sorted(individual_performances.items(), 
-                           key=lambda x: x[1]['test_roc_auc'], 
-                           reverse=True)[:4]
+                           key=lambda x: x[1]['test_roc_auc'], reverse=True)[:4]
         
-        print(f"🏆 Top 4 models selected for ensemble:")
-        for i, (name, perf) in enumerate(top_models, 1):
-            print(f"   {i}. {name}: ROC-AUC = {perf['test_roc_auc']:.4f}")
+        print(f"Top 4 base models: {', '.join([name for name, _ in top_models])}\n")
         
-        # Prepare base estimators
         base_estimators = [(name.replace(' ', '_').lower(), trained_models[name]) 
                           for name, _ in top_models]
         
         ensemble_models = {}
         ensemble_performances = {}
+        progress = ProgressTracker(2, "Ensemble Training")
         
         # Stacking Classifier
-        print(f"\n🔧 Training Stacking Ensemble...")
         stacking_model = StackingClassifier(
             estimators=base_estimators,
             final_estimator=LogisticRegression(max_iter=2000, n_jobs=-1, random_state=42),
-            cv=5,
-            n_jobs=-1,
-            verbose=0
+            cv=5, n_jobs=-1, verbose=0
         )
-        
         start_time = time.time()
         stacking_model.fit(X_train, y_train)
         stacking_time = time.time() - start_time
         
-        # Evaluate stacking
         stacking_metrics = self._evaluate_ensemble_model(
             stacking_model, X_train, y_train, X_val, y_val, X_test, y_test, 
             'Stacking Ensemble', stacking_time
         )
-        
         ensemble_models['Stacking Ensemble'] = stacking_model
         ensemble_performances['Stacking Ensemble'] = stacking_metrics
         
-        # Voting Classifier
-        print(f"\n🔧 Training Voting Ensemble...")
-        voting_model = VotingClassifier(
-            estimators=base_estimators,
-            voting='soft',
-            n_jobs=-1,
-            verbose=0
-        )
+        # Save and generate curves silently
+        self._save_model_with_metadata(stacking_model, 'Stacking Ensemble', stacking_metrics)
+        self._generate_model_curves('Stacking Ensemble', y_test, stacking_model.predict_proba(X_test)[:, 1])
         
+        result_str = f"Stacking: ROC-AUC={stacking_metrics['test_roc_auc']:.4f} ({format_time(stacking_time)})"
+        progress.update(result_str, stacking_time)
+        
+        # Voting Classifier
+        voting_model = VotingClassifier(
+            estimators=base_estimators, voting='soft', n_jobs=-1, verbose=0
+        )
         start_time = time.time()
         voting_model.fit(X_train, y_train)
         voting_time = time.time() - start_time
         
-        # Evaluate voting
         voting_metrics = self._evaluate_ensemble_model(
             voting_model, X_train, y_train, X_val, y_val, X_test, y_test,
             'Voting Ensemble', voting_time
         )
-        
         ensemble_models['Voting Ensemble'] = voting_model
         ensemble_performances['Voting Ensemble'] = voting_metrics
         
-        # Save ensemble models with metadata
-        for name, model in ensemble_models.items():
-            self._save_model_with_metadata(model, name, ensemble_performances[name])
-            # Generate curves
-            y_pred_proba = model.predict_proba(X_test)[:, 1]
-            self._generate_model_curves(name, y_test, y_pred_proba)
+        # Save and generate curves silently
+        self._save_model_with_metadata(voting_model, 'Voting Ensemble', voting_metrics)
+        self._generate_model_curves('Voting Ensemble', y_test, voting_model.predict_proba(X_test)[:, 1])
         
+        result_str = f"Voting: ROC-AUC={voting_metrics['test_roc_auc']:.4f} ({format_time(voting_time)})"
+        progress.update(result_str, voting_time)
+        
+        progress.complete()
         self.metadata['ensemble_results'] = ensemble_performances
         
         return ensemble_models, ensemble_performances
@@ -543,13 +475,10 @@ class ExoplanetModelTrainer:
     def _evaluate_ensemble_model(self, model, X_train, y_train, X_val, y_val, 
                                 X_test, y_test, model_name, training_time):
         """Comprehensive evaluation for ensemble models"""
-        
-        # Predictions
         y_pred_test = model.predict(X_test)
         y_pred_proba_test = model.predict_proba(X_test)[:, 1]
         
-        # Metrics
-        metrics = {
+        return {
             'test_accuracy': accuracy_score(y_test, y_pred_test),
             'test_precision': precision_score(y_test, y_pred_test),
             'test_recall': recall_score(y_test, y_pred_test),
@@ -558,18 +487,12 @@ class ExoplanetModelTrainer:
             'test_average_precision': average_precision_score(y_test, y_pred_proba_test),
             'training_time_seconds': training_time
         }
-        
-        print(f"✅ {model_name} Complete!")
-        print(f"   Training Time: {training_time:.2f}s")
-        print(f"   Test ROC-AUC: {metrics['test_roc_auc']:.4f}")
-        print(f"   Test F1-Score: {metrics['test_f1']:.4f}")
-        print(f"   Test Recall: {metrics['test_recall']:.4f}")
-        
-        return metrics
     
     def generate_comprehensive_analysis(self, all_performances):
         """Generate comprehensive analysis with ROC/PR curves comparison"""
-        print("\n📊 Generating comprehensive analysis...")
+        print(f"\n{'='*80}")
+        print(f"📊 FINAL ANALYSIS")
+        print(f"{'='*80}\n")
         
         # Identify best model
         best_model_name = max(all_performances.items(), 
@@ -586,9 +509,10 @@ class ExoplanetModelTrainer:
         # Save best model separately
         best_model_file = f"{best_model_name.replace(' ', '_').lower()}_model.joblib"
         best_model_path = f"models/{best_model_file}"
-        
         import shutil
         shutil.copy(best_model_path, 'models/BEST_MODEL.joblib')
+        
+        print(f"Generating comprehensive visualizations and reports...")
         
         # Create comprehensive visualization
         self._create_comprehensive_plots(all_performances)
@@ -596,8 +520,8 @@ class ExoplanetModelTrainer:
         # Generate final report
         self._generate_final_report(all_performances, best_model_name)
         
-        print(f"🏆 Best Model: {best_model_name}")
-        print(f"   💾 Saved as: models/BEST_MODEL.joblib")
+        print(f"\n🏆 Best Model: {best_model_name} (ROC-AUC: {all_performances[best_model_name]['test_roc_auc']:.4f})")
+        print(f"💾 Saved as: models/BEST_MODEL.joblib\n")
     
     def _create_comprehensive_plots(self, all_performances):
         """Create comprehensive visualization dashboard"""
@@ -727,20 +651,13 @@ class ExoplanetModelTrainer:
         plt.tight_layout()
         plt.savefig('plots/comprehensive_model_analysis.png', dpi=300, bbox_inches='tight')
         plt.close()
-        
-        print("   📈 Saved: plots/comprehensive_model_analysis.png")
     
     def _generate_final_report(self, all_performances, best_model_name):
         """Generate final training report"""
-        
-        # Create performance summary DataFrame
         performance_df = pd.DataFrame(all_performances).T
         performance_df = performance_df.round(4)
-        
-        # Save detailed results
         performance_df.to_csv('models/final_model_performance_detailed.csv')
         
-        # Generate summary statistics
         summary_stats = {
             'total_models_trained': len(all_performances),
             'best_model': best_model_name,
@@ -750,18 +667,11 @@ class ExoplanetModelTrainer:
             'total_training_time': sum([perf['training_time_seconds'] for perf in all_performances.values()]),
             'analysis_completion_time': datetime.now().isoformat()
         }
-        
         self.metadata['training_summary'] = summary_stats
-        
-        print(f"\n📊 Training Summary:")
-        print(f"   - Total models trained: {summary_stats['total_models_trained']}")
-        print(f"   - Best model: {best_model_name}")
-        print(f"   - Best ROC-AUC: {summary_stats['best_roc_auc']:.4f}")
-        print(f"   - Average ROC-AUC: {summary_stats['average_roc_auc']:.4f} ± {summary_stats['std_roc_auc']:.4f}")
-        print(f"   - Total training time: {summary_stats['total_training_time']:.2f} seconds")
     
     def run_complete_training_pipeline(self):
         """Execute complete model training pipeline"""
+        pipeline_start = time.time()
         
         # Load data
         X, y, feature_names = self.load_processed_data()
@@ -793,17 +703,18 @@ class ExoplanetModelTrainer:
         with open(metadata_path, 'w') as f:
             json.dump(self.metadata, f, indent=4, default=str)
         
-        print(f"\n" + "="*80)
-        print("✅ COMPLETE TRAINING PIPELINE FINISHED!")
-        print(f"End Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("="*80)
-        print(f"📂 All files saved in:")
-        print(f"   - Models: ./models/")
-        print(f"   - Plots: ./plots/")
-        print(f"   - Metadata: ./metadata/")
-        print(f"📊 Complete metadata: {metadata_path}")
-        print("🚀 Ready for inference! Use: python inference_script.py")
-        print("="*80)
+        total_time = time.time() - pipeline_start
+        summary = self.metadata['training_summary']
+        
+        print(f"{'='*80}")
+        print(f"✅ TRAINING COMPLETE")
+        print(f"{'='*80}")
+        print(f"⏱️  Total Time: {format_time(total_time)}")
+        print(f"📊 Models Trained: {summary['total_models_trained']}")
+        print(f"🏆 Best: {summary['best_model']} (ROC-AUC: {summary['best_roc_auc']:.4f})")
+        print(f"📈 Average ROC-AUC: {summary['average_roc_auc']:.4f} ± {summary['std_roc_auc']:.4f}")
+        print(f"💾 Output: ./models/ | ./plots/ | ./metadata/")
+        print(f"{'='*80}\n")
         
         return all_performances
 
@@ -816,16 +727,12 @@ except ImportError:
 
 def main():
     """Main execution function"""
-    trainer = ExoplanetModelTrainer()
-    
     try:
+        trainer = ExoplanetModelTrainer()
         results = trainer.run_complete_training_pipeline()
-        print()
-        print("✅ Training pipeline completed successfully!")
         return results
     except Exception as e:
-        print()
-        print(f"❌ Training failed: {str(e)}")
+        print(f"\n❌ Training failed: {str(e)}")
         raise
 
 if __name__ == "__main__":

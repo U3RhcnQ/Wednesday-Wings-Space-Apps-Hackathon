@@ -39,6 +39,7 @@ def find_toi_data_file():
     possible_locations = [
         # Primary location - new datasets directory
         backend_root / 'datasets' / 'toi.csv',
+        backend_root / 'data' / 'raw' / 'toi.csv',  # Current actual location
         
         # Fallback locations
         backend_root / 'cleaned_datasets' / 'toi_cleaned.csv',

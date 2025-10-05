@@ -142,9 +142,6 @@ class RobustPipelineOrchestrator:
         else:
             work_dir = script_path.parent
 
-        print(f"\n{'='*70}")
-        print(f"🏃 {stage_name}")
-        print(f"{'='*70}")
         print()  # Add space before subprocess output
 
         try:
@@ -251,18 +248,18 @@ class RobustPipelineOrchestrator:
                 'script': 'data-acquisition.py',
                 'description': 'Download and organize NASA exoplanet datasets',
                 'working_dir': self.current_dir,
-                'required': True  # Can work with existing data
+                'required': True 
             },
             {
                 'name': 'Data Sanitization',
                 'script': 'run_all_sanitizers.py',
                 'description': 'Run specialized data cleaning scripts',
                 'working_dir': self.paths['sanitization'],
-                'required': False  # Optional - use raw data if no sanitizers
+                'required': True  # Optional - use raw data if no sanitizers
             },
             {
                 'name': 'Robust Preprocessing',
-                'script': 'robust-preprocessing.py',
+                'script': 'optimised-processing.py',
                 'description': 'Unified preprocessing with automatic data discovery',
                 'working_dir': self.current_dir,
                 'required': True

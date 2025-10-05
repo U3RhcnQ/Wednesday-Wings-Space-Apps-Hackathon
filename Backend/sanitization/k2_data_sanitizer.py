@@ -39,6 +39,7 @@ def find_k2_data_file():
     possible_locations = [
         # Primary location - new datasets directory
         backend_root / 'datasets' / 'k2.csv',
+        backend_root / 'data' / 'raw' / 'k2.csv',  # Current actual location
         
         # Fallback locations
         backend_root / 'cleaned_datasets' / 'k2_cleaned.csv',

@@ -39,6 +39,7 @@ def find_koi_data_file():
     possible_locations = [
         # Primary location - new datasets directory
         backend_root / 'datasets' / 'koi.csv',
+        backend_root / 'data' / 'raw' / 'koi.csv',  # Current actual location
         
         # Fallback locations
         backend_root / 'cleaned_datasets' / 'koi_cleaned.csv',
