@@ -144,6 +144,44 @@ logger = setup_logging()
 # DATA LOADING AND UNIFICATION
 # ============================================================================
 
+def create_proper_binary_labels(df, disposition_col):
+    """
+    Create proper binary labels for planet classification:
+    CONFIRMED = 1 (definite planet)
+    FALSE POSITIVE = 0 (definite not planet)
+    CANDIDATES = excluded from training (uncertain)
+    
+    This fixes Issue 2 from ANALYSIS_AND_RECOMMENDATIONS.md
+    """
+    disposition_upper = df[disposition_col].str.upper()
+    
+    # Only keep records where we're certain of the label
+    certain_mask = (
+        (disposition_upper == 'CONFIRMED') |
+        (disposition_upper == 'FALSE POSITIVE') |
+        (disposition_upper.str.contains('FP', na=False, regex=False)) |
+        (disposition_upper == 'REFUTED')
+    )
+    
+    df_filtered = df[certain_mask].copy()
+    
+    # Create proper binary labels
+    df_filtered['is_confirmed'] = (
+        df_filtered[disposition_col].str.upper() == 'CONFIRMED'
+    ).astype(int)
+    
+    # Log the filtering results
+    original_counts = disposition_upper.value_counts()
+    filtered_counts = df_filtered[disposition_col].str.upper().value_counts()
+    
+    logger.info(f"    Label filtering results:")
+    logger.info(f"    Original: {len(df)} records")
+    logger.info(f"    Filtered: {len(df_filtered)} records ({len(df_filtered)/len(df)*100:.1f}% retained)")
+    logger.info(f"    Excluded uncertain CANDIDATES: {original_counts.get('CANDIDATE', 0)} records")
+    logger.info(f"    Final: Planets={filtered_counts.get('CONFIRMED', 0)}, Non-planets={filtered_counts.get('FALSE POSITIVE', 0) + filtered_counts.get('REFUTED', 0)}")
+    
+    return df_filtered
+
 def load_and_unify_datasets():
     """Load sanitized datasets and unify column names"""
     logger.info("=" * 80)
@@ -194,9 +232,9 @@ def load_and_unify_datasets():
                     df['is_confirmed'] = df[disposition_col].astype(int)
                     logger.info(f"  Used numeric {disposition_col} as is_confirmed")
                 else:
-                    # String disposition from sanitized files
-                    df['is_confirmed'] = (df[disposition_col].str.upper() == 'CONFIRMED').astype(int)
-                    logger.info(f"  Created is_confirmed from {disposition_col}")
+                    # String disposition from sanitized files - CREATE PROPER BINARY LABELS
+                    df = create_proper_binary_labels(df, disposition_col)
+                    logger.info(f"  Created proper binary labels from {disposition_col}")
             else:
                 logger.error(f"  No disposition column found! Columns: {df.columns.tolist()[:10]}...")
                 continue

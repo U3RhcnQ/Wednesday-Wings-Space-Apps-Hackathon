@@ -233,8 +233,26 @@ class OptimizedPreprocessing:
                 if disposition_col:
                     dispositions = df[disposition_col].astype(str).str.upper()
                     binary_labels = dispositions.apply(self.create_binary_label)
-                    label_counts = Counter(binary_labels)
+                    
+                    # Filter out None values (uncertain cases like CANDIDATES)
+                    valid_mask = binary_labels.notna()
+                    df_filtered = df[valid_mask].copy()
+                    binary_labels_filtered = binary_labels[valid_mask]
+                    
+                    label_counts = Counter(binary_labels_filtered)
                     print(f"       Planets: {label_counts.get(1, 0):,}, Non-planets: {label_counts.get(0, 0):,}")
+                    print(f"       Excluded uncertain: {(~valid_mask).sum():,} records")
+                    
+                    # Update unified features to match filtered data
+                    unified_features_filtered = {}
+                    for col, values in unified_features.items():
+                        if isinstance(values, (list, pd.Series)):
+                            unified_features_filtered[col] = pd.Series(values)[valid_mask].values
+                        else:
+                            unified_features_filtered[col] = values
+                    
+                    unified_features = unified_features_filtered
+                    binary_labels = binary_labels_filtered
                 else:
                     self.log(f"Skipping {dataset_type} - no disposition column", "WARNING")
                     continue
@@ -276,15 +294,33 @@ class OptimizedPreprocessing:
             return None, None, None, None
 
     def create_binary_label(self, disposition_str):
-        """Create binary labels from disposition strings"""
+        """
+        Create proper binary labels from disposition strings
+        
+        Fixed Issue 2: Now creates proper binary classification:
+        CONFIRMED/CP/KP = 1 (definite planet)
+        FALSE POSITIVE/FP/REFUTED = 0 (definite not planet)
+        CANDIDATE = None (excluded - uncertain)
+        """
         if pd.isna(disposition_str) or disposition_str == 'NAN':
-            return 0
+            return None  # Exclude NaN values
+        
+        disposition_str = disposition_str.upper()
 
-        # Confirmed planets
-        if any(keyword in disposition_str for keyword in ['CONFIRMED', 'CP', 'KP', 'PLANET']):
+        # Definite planets
+        if any(keyword in disposition_str for keyword in ['CONFIRMED', 'CP', 'KP']):
             return 1
-
-        return 0
+        
+        # Definite false positives  
+        if any(keyword in disposition_str for keyword in ['FALSE POSITIVE', 'FP', 'REFUTED']):
+            return 0
+            
+        # Uncertain cases (CANDIDATES) - exclude from training
+        if 'CANDIDATE' in disposition_str:
+            return None
+            
+        # Default: treat unknown as exclude
+        return None
 
     def engineer_advanced_features(self, X_features):
         """
