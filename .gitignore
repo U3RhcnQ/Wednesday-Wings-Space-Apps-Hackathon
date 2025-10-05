@@ -191,3 +191,8 @@ Backend/ml_pipeline/plots/real_world_test/roc_curves.png
 Backend/ml_pipeline/results/real_world_test_report.json
 Backend/ml_pipeline/plots/real_world_test/precision_recall_curves.png
 Backend/ml_pipeline/models/.~lock.individual_model_performance.csv#
+Backend/data/processed/feature_names.joblib
+Backend/data/processed/labels_processed.npy
+Backend/data/processed/feature_names.joblib
+Backend/data/processed/labels_processed.npy
+Backend/data/processed/feature_names.joblib

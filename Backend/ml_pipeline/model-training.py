@@ -184,12 +184,34 @@ class ExoplanetModelTrainer:
             # Load as DataFrame to preserve feature names for models
             X_df = pd.read_csv(self.paths['data_processed'] / 'features_processed.csv')
             y = np.load(self.paths['data_processed'] / 'labels_processed.npy')
-            feature_names = joblib.load(self.paths['data_processed'] /  'feature_names.joblib')
             
-            # Ensure DataFrame columns match feature_names
-            if list(X_df.columns) != feature_names:
-                print(f"⚠️  Reordering columns to match feature_names")
-                X_df = X_df[feature_names]
+            # Try to load feature names from joblib, but handle mismatch gracefully
+            try:
+                saved_feature_names = joblib.load(self.paths['data_processed'] / 'feature_names.joblib')
+                print(f"📋 Loaded feature names from joblib: {len(saved_feature_names)} features")
+            except:
+                saved_feature_names = None
+                print(f"⚠️  Could not load feature_names.joblib, using CSV columns")
+            
+            # Use actual CSV columns as the source of truth
+            actual_feature_names = list(X_df.columns)
+            
+            # Check if saved feature names match actual columns
+            if saved_feature_names is not None and set(actual_feature_names) == set(saved_feature_names):
+                # Perfect match - use saved order if it exists
+                feature_names = saved_feature_names
+                print(f"✅ Feature names match - using saved order")
+            else:
+                # Mismatch or no saved names - use actual CSV columns
+                feature_names = actual_feature_names
+                print(f"⚠️  Using actual CSV column names ({len(feature_names)} features)")
+                if saved_feature_names is not None:
+                    missing_in_csv = set(saved_feature_names) - set(actual_feature_names)
+                    missing_in_saved = set(actual_feature_names) - set(saved_feature_names)
+                    if missing_in_csv:
+                        print(f"   Missing in CSV: {list(missing_in_csv)[:5]}...")
+                    if missing_in_saved:
+                        print(f"   New in CSV: {list(missing_in_saved)[:5]}...")
             
             class_dist = Counter(y)
             print(f"📂 Loaded: {X_df.shape[0]:,} samples × {X_df.shape[1]} features | Classes: {dict(class_dist)}")
@@ -200,7 +222,8 @@ class ExoplanetModelTrainer:
                 'labels_shape': y.shape,
                 'feature_count': len(feature_names),
                 'class_distribution': dict(class_dist),
-                'feature_names': feature_names
+                'feature_names': feature_names,
+                'feature_names_source': 'csv_columns' if feature_names == actual_feature_names else 'saved_joblib'
             }
             self.feature_names = feature_names  # Store for later use
             
@@ -722,9 +745,14 @@ class ExoplanetModelTrainer:
             json.dump({
                 'feature_names': feature_names,
                 'feature_count': len(feature_names),
-                'creation_timestamp': datetime.now().isoformat()
+                'creation_timestamp': datetime.now().isoformat(),
+                'source': 'training_pipeline'
             }, f, indent=4)
         print(f"💾 Feature metadata saved: {feature_metadata_path}")
+        
+        # Also save feature names as joblib for backward compatibility
+        joblib.dump(feature_names, self.paths['data_processed'] / 'feature_names.joblib')
+        print(f"💾 Feature names saved to joblib for compatibility")
         
         # Create splits
         X_train, X_val, X_test, y_train, y_val, y_test = self.create_data_splits(X, y)
