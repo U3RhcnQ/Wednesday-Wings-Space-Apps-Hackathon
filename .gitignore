@@ -66,9 +66,19 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
+# ============================================================================
+# CRITICAL FIXES IMPLEMENTATION - GITIGNORE UPDATES
+# ============================================================================
+# Added entries for artifacts created by the 3 critical ML pipeline fixes:
+# - Issue 1: False positives now included (larger datasets)
+# - Issue 2: Proper binary classification (new preprocessing artifacts) 
+# - Issue 3: Strategic sampling (new ML pipeline outputs)
+
 # Project-specific logs
 *.log
 *_log_*.txt
+*preprocessing*.log
+*sanitization*.log
 
 # Cleaned datasets (keep folders, ignore contents)
 Backend-old/cleaned_datasets/*
@@ -119,6 +129,21 @@ Backend/models/*
 *.pkl
 *.h5
 *.model
+
+# ML Pipeline artifacts (from Issue 3 fix)
+Backend/ml_pipeline/logs/*
+!Backend/ml_pipeline/logs/.gitkeep
+Backend/ml_pipeline/plots/*
+!Backend/ml_pipeline/plots/.gitkeep
+Backend/ml_pipeline/metadata/*
+!Backend/ml_pipeline/metadata/.gitkeep
+
+# Preprocessing artifacts (from fixes)
+*preprocessing*.json
+*final_scaler*.pkl
+*feature_columns*.txt
+*label_encoders*.joblib
+*numerical_scaler*.joblib
 
 # Normalization artifacts
 Backend/normalisation/__pycache__/

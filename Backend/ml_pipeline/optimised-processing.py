@@ -141,6 +141,110 @@ def setup_logging():
 logger = setup_logging()
 
 # ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+class ProcessingConfig:
+    """Configuration for data processing pipeline"""
+    
+    # Sampling configuration (Issue 3 fix)
+    SAMPLE_FRACTION = 1.0  # Use all data by default (1.0 = 100%)
+    MIN_SAMPLES_PER_CLASS = 500  # Minimum samples per class when sampling
+    ENABLE_SAMPLING = False  # Enable for rapid prototyping
+    
+    # Feature engineering
+    ENABLE_FEATURE_ENGINEERING = True
+    
+    # SMOTE configuration  
+    SMOTE_RATIO_THRESHOLD = 3.0  # Apply SMOTE if imbalance > 3:1
+    
+    # Paths
+    DATA_DIR = PROJECT_PATHS['data_processed']
+    METADATA_DIR = PROJECT_PATHS['metadata']
+
+# ============================================================================
+# SMART SAMPLING UTILITIES
+# ============================================================================
+
+def create_stratified_sample(X, y, sample_fraction=1.0, min_samples_per_class=500, random_state=42):
+    """
+    Create stratified sample ensuring representation of all classes
+    
+    This implements the solution for Issue 3 from ANALYSIS_AND_RECOMMENDATIONS.md
+    
+    Args:
+        X: Feature matrix
+        y: Labels  
+        sample_fraction: Fraction of data to use (1.0 = use all)
+        min_samples_per_class: Minimum samples per class to keep
+        random_state: Random seed for reproducibility
+        
+    Returns:
+        X_sampled, y_sampled: Sampled data maintaining class balance
+    """
+    from collections import Counter
+    from sklearn.model_selection import StratifiedShuffleSplit
+    
+    if sample_fraction >= 1.0:
+        logger.info("  Using all available data (no sampling)")
+        return X, y
+    
+    # Check class distribution
+    class_counts = Counter(y)
+    min_class_size = min(class_counts.values())
+    total_samples = len(y)
+    
+    logger.info(f"  Original data: {total_samples:,} samples")
+    logger.info(f"  Class distribution: {dict(class_counts)}")
+    logger.info(f"  Smallest class: {min_class_size:,} samples")
+    
+    # Safety check: don't sample if classes are too small
+    if min_class_size < min_samples_per_class:
+        logger.warning(f"  ⚠️  Smallest class has only {min_class_size:,} samples (< {min_samples_per_class:,})")
+        logger.warning(f"  ⚠️  Using all data to preserve class balance")
+        return X, y
+    
+    # Calculate target sample size
+    target_samples = int(total_samples * sample_fraction)
+    target_samples = max(target_samples, len(class_counts) * min_samples_per_class)
+    
+    if target_samples >= total_samples:
+        logger.info("  Target sample size >= original size, using all data")
+        return X, y
+    
+    # Create stratified sample
+    logger.info(f"  Creating stratified sample: {target_samples:,} samples ({sample_fraction:.1%})")
+    
+    splitter = StratifiedShuffleSplit(
+        n_splits=1, 
+        train_size=target_samples, 
+        random_state=random_state
+    )
+    
+    sample_idx, _ = next(splitter.split(X, y))
+    
+    X_sampled = X.iloc[sample_idx] if hasattr(X, 'iloc') else X[sample_idx]
+    y_sampled = y.iloc[sample_idx] if hasattr(y, 'iloc') else y[sample_idx]
+    
+    # Verify sampling results
+    sampled_class_counts = Counter(y_sampled)
+    logger.info(f"  ✓ Sampled: {len(y_sampled):,} samples")
+    logger.info(f"  ✓ Sampled class distribution: {dict(sampled_class_counts)}")
+    
+    # Check if class balance is maintained
+    original_ratios = {k: v/total_samples for k, v in class_counts.items()}
+    sampled_ratios = {k: v/len(y_sampled) for k, v in sampled_class_counts.items()}
+    
+    logger.info(f"  ✓ Class balance preserved:")
+    for class_label in class_counts.keys():
+        orig_pct = original_ratios[class_label] * 100
+        samp_pct = sampled_ratios[class_label] * 100
+        logger.info(f"    Class {class_label}: {orig_pct:.1f}% → {samp_pct:.1f}%")
+    
+    return X_sampled, y_sampled
+
+
+# ============================================================================
 # DATA LOADING AND UNIFICATION
 # ============================================================================
 
@@ -561,7 +665,46 @@ def dataset_specific_smote(df):
 # ============================================================================
 
 def main():
-    """Main preprocessing pipeline"""
+    """
+    Main execution function with command-line argument support for Issue 3 fix
+    
+    Usage examples:
+    python optimised-processing.py                    # Use all data (default)
+    python optimised-processing.py --sample 0.3      # Use 30% sample
+    python optimised-processing.py --sample 0.5      # Use 50% sample
+    python optimised-processing.py --rapid           # Rapid prototyping (30% sample)
+    """
+    import argparse
+    import sys
+    
+    # Only parse args if running as main script
+    if len(sys.argv) > 1:
+        parser = argparse.ArgumentParser(description='Exoplanet Data Processing Pipeline')
+        parser.add_argument('--sample', type=float, default=1.0, 
+                           help='Sample fraction (0.1-1.0). Default: 1.0 (use all data)')
+        parser.add_argument('--rapid', action='store_true',
+                           help='Enable rapid prototyping mode (30%% sample)')
+        parser.add_argument('--min-samples', type=int, default=500,
+                           help='Minimum samples per class when sampling. Default: 500')
+        
+        args = parser.parse_args()
+        
+        # Configure sampling based on arguments
+        if args.rapid:
+            ProcessingConfig.ENABLE_SAMPLING = True
+            ProcessingConfig.SAMPLE_FRACTION = 0.3
+            ProcessingConfig.MIN_SAMPLES_PER_CLASS = 200  # Lower for rapid prototyping
+            print("🚀 RAPID PROTOTYPING MODE: Using 30% sample for fast iteration")
+        elif args.sample < 1.0:
+            ProcessingConfig.ENABLE_SAMPLING = True
+            ProcessingConfig.SAMPLE_FRACTION = args.sample
+            ProcessingConfig.MIN_SAMPLES_PER_CLASS = args.min_samples
+            print(f"📊 SAMPLING MODE: Using {args.sample:.1%} of data")
+        else:
+            ProcessingConfig.ENABLE_SAMPLING = False
+            print("📈 FULL DATA MODE: Using all available data")
+    
+    # Run the main processing pipeline
     logger.info("=" * 80)
     logger.info("EXOPLANET DATA PREPROCESSING PIPELINE v2.0")
     logger.info("Optimized for ML with domain-specific features")
@@ -625,6 +768,32 @@ def main():
         # Save scaler
         joblib.dump(scaler, PROJECT_PATHS['metadata'] / 'final_scaler.pkl')
         logger.info("✓ Applied final normalization and saved scaler")
+
+        # Step 6: Apply strategic sampling (Issue 3 fix)
+        if ProcessingConfig.ENABLE_SAMPLING:
+            logger.info(f"\nSTEP 5.5: Applying strategic sampling...")
+            logger.info("=" * 80)
+            logger.info("STRATEGIC SAMPLING")
+            logger.info("=" * 80)
+            
+            X_sampled, y_sampled = create_stratified_sample(
+                X_normalized.drop(columns=['dataset_source']),
+                y_final,
+                sample_fraction=ProcessingConfig.SAMPLE_FRACTION,
+                min_samples_per_class=ProcessingConfig.MIN_SAMPLES_PER_CLASS
+            )
+            
+            # Update the dataset source to match sampled data
+            if hasattr(X_sampled, 'index'):
+                dataset_source_sampled = dataset_source.iloc[X_sampled.index]
+            else:
+                dataset_source_sampled = dataset_source  # Keep original if no sampling
+                
+            X_normalized = X_sampled.copy()
+            X_normalized['dataset_source'] = dataset_source_sampled.values
+            y_final = y_sampled
+        else:
+            logger.info("\nSTEP 5.5: Sampling disabled - using all data")
 
         # Step 7: Save processed data
         logger.info("\nSTEP 6: Saving processed data...")
