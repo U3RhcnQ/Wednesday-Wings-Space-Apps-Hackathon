@@ -102,14 +102,14 @@ export default function Layout({ children }: LayoutProps) {
                 Upload Module
               </Link>
               <Link
-                to="/model"
+                to="/training"
                 className={`px-6 py-2 rounded-lg transition-all font-medium ${
-                  location.pathname === '/model' 
+                  location.pathname === '/training' 
                     ? 'nasa-button text-white' 
                     : 'hover:bg-white/10 text-gray-300 border border-transparent hover:border-white/20'
                 }`}
               >
-                AI Models
+                AI Training
               </Link>
               <Link
                 to="/data-preview"
@@ -120,6 +120,16 @@ export default function Layout({ children }: LayoutProps) {
                 }`}
               >
                 Data Explorer
+              </Link>
+              <Link
+                to="/classifier"
+                className={`px-6 py-2 rounded-lg transition-all font-medium ${
+                  location.pathname === '/classifier' 
+                    ? 'nasa-button text-white' 
+                    : 'hover:bg-white/10 text-gray-300 border border-transparent hover:border-white/20'
+                }`}
+              >
+                AI Classifier
               </Link>
             </div>
           </div>
