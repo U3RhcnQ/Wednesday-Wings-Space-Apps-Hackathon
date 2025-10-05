@@ -7,6 +7,7 @@ import K2DataPage from './components/pages/K2DataPage';
 import TOIDataPage from './components/pages/TOIDataPage';
 import UploadPage from './components/pages/UploadPage';
 import ModelPage from './components/pages/ModelPage';
+import DataPreviewPage from './components/pages/DataPreviewPage';
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
           <Route path="/library/toi" element={<TOIDataPage />} />
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/model" element={<ModelPage />} />
+          <Route path="/data-preview" element={<DataPreviewPage />} />
         </Routes>
       </Layout>
     </Router>

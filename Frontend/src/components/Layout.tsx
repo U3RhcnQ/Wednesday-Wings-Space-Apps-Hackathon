@@ -111,6 +111,16 @@ export default function Layout({ children }: LayoutProps) {
               >
                 AI Models
               </Link>
+              <Link
+                to="/data-preview"
+                className={`px-6 py-2 rounded-lg transition-all font-medium ${
+                  location.pathname === '/data-preview' 
+                    ? 'nasa-button text-white' 
+                    : 'hover:bg-white/10 text-gray-300 border border-transparent hover:border-white/20'
+                }`}
+              >
+                Data Explorer
+              </Link>
             </div>
           </div>
         </div>
