@@ -157,23 +157,39 @@ def normalize_dataset(input_file, output_file, dataset_name):
 
 def main():
     """Main function to normalize all datasets"""
-    base_path = '/home/ciaran/Documents/Wednesday-Wings-Space-Apps-Hackathon/Backend'
+    # Detect backend root dynamically
+    from pathlib import Path
+    current_path = Path(__file__).resolve()
+    backend_root = current_path.parent.parent  # Go up from normalisation/ to Backend/
+    
+    base_path = str(backend_root)
+    
+    # Check both old and new data locations
+    sanitized_path = os.path.join(base_path, 'data', 'sanitized')
     cleaned_path = os.path.join(base_path, 'cleaned_datasets')
     normalized_path = os.path.join(base_path, 'data', 'normalised')
     
     # Ensure output directory exists
     os.makedirs(normalized_path, exist_ok=True)
     
+    # Define dataset mappings with both old and new naming conventions
     datasets = [
-        ('k2_cleaned.csv', 'k2_normalised.csv', 'K2'),
-        ('koi_cleaned.csv', 'koi_normalised.csv', 'KOI'),
-        ('toi_cleaned.csv', 'toi_normalised.csv', 'TOI')
+        ('k2_sanitized.csv', 'k2_normalised.csv', 'K2'),
+        ('koi_sanitized.csv', 'koi_normalised.csv', 'KOI'),
+        ('toi_sanitized.csv', 'toi_normalised.csv', 'TOI')
     ]
     
     results = []
     
     for input_name, output_name, dataset_name in datasets:
-        input_file = os.path.join(cleaned_path, input_name)
+        # Try new location first (data/sanitized), then fall back to old location
+        input_file = os.path.join(sanitized_path, input_name)
+        
+        # If not in sanitized, try the old cleaned_datasets location
+        if not os.path.exists(input_file):
+            old_input_name = input_name.replace('_sanitized', '_cleaned')
+            input_file = os.path.join(cleaned_path, old_input_name)
+        
         output_file = os.path.join(normalized_path, output_name)
         
         try:

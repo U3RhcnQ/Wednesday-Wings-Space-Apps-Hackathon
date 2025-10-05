@@ -223,7 +223,11 @@ def check_output_files():
     """Check if sanitized output files were created"""
     backend_root = detect_backend_root()
 
+    # Check both old and new locations
     all_outputs  = [
+        backend_root / 'data' / 'sanitized' / 'k2_sanitized.csv',
+        backend_root / 'data' / 'sanitized' / 'koi_sanitized.csv',
+        backend_root / 'data' / 'sanitized' / 'toi_sanitized.csv',
         backend_root / 'cleaned_datasets' / 'k2_cleaned.csv',
         backend_root / 'cleaned_datasets' / 'koi_cleaned.csv',
         backend_root / 'cleaned_datasets' / 'toi_cleaned.csv'

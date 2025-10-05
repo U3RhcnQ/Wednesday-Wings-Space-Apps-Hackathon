@@ -138,3 +138,9 @@ Backend/plots/data_quality/*
 *.bak
 *~
 .#*
+Backend/data/processed/labels_processed.npy
+Backend/ml_pipeline/plots/random_forest_curves.png
+Backend/ml_pipeline/plots/extra_trees_curves.png
+Backend/ml_pipeline/metadata/random_forest_metadata.json
+Backend/ml_pipeline/metadata/extra_trees_metadata.json
+Backend/data/processed/labels_processed.npy

@@ -29,6 +29,8 @@ project_root = backend_dir.parent
 
 PROJECT_PATHS = {
     'cleaned_datasets': backend_dir / 'cleaned_datasets',
+    'data_sanitized': backend_dir / 'data' / 'sanitized',
+    'data_normalised': backend_dir / 'data' / 'normalised',
     'data_processed': backend_dir / 'data' / 'processed',
     'models': backend_dir / 'models',
     'metadata': backend_dir / 'metadata',
@@ -151,28 +153,70 @@ def load_and_unify_datasets():
     datasets = {}
 
     for dataset_name in ['k2', 'koi', 'toi']:
-        file_path = PROJECT_PATHS['cleaned_datasets'] / f'{dataset_name}_sanitized.csv'
-
-        if not file_path.exists():
-            logger.warning(f"{dataset_name.upper()} file not found at {file_path}")
+        # Try multiple locations in order of preference
+        # Prefer sanitized over normalized since we need the disposition columns
+        possible_paths = [
+            PROJECT_PATHS['data_sanitized'] / f'{dataset_name}_sanitized.csv',
+            PROJECT_PATHS['cleaned_datasets'] / f'{dataset_name}_sanitized.csv',
+            PROJECT_PATHS['cleaned_datasets'] / f'{dataset_name}_cleaned.csv',
+            PROJECT_PATHS['data_normalised'] / f'{dataset_name}_normalised.csv',
+        ]
+        
+        file_path = None
+        for path in possible_paths:
+            if path.exists():
+                file_path = path
+                break
+        
+        if file_path is None:
+            logger.warning(f"{dataset_name.upper()} file not found in any expected location")
             continue
 
         df = pd.read_csv(file_path)
+        logger.info(f"Loaded {dataset_name.upper()} from: {file_path}")
         logger.info(f"Loaded {dataset_name.upper()}: {df.shape}")
+        
+        # Create is_confirmed column if it doesn't exist (from disposition)
+        if 'is_confirmed' not in df.columns:
+            # Try different disposition column names for each dataset
+            disposition_col = None
+            if 'disposition' in df.columns:
+                disposition_col = 'disposition'
+            elif 'koi_disposition' in df.columns:
+                disposition_col = 'koi_disposition'
+            elif 'tfopwg_disp' in df.columns:
+                disposition_col = 'tfopwg_disp'
+            
+            if disposition_col:
+                # Check if disposition is already numeric (from normalized files)
+                if pd.api.types.is_numeric_dtype(df[disposition_col]):
+                    # Assuming 1 = CONFIRMED, 0 = CANDIDATE in normalized files
+                    df['is_confirmed'] = df[disposition_col].astype(int)
+                    logger.info(f"  Used numeric {disposition_col} as is_confirmed")
+                else:
+                    # String disposition from sanitized files
+                    df['is_confirmed'] = (df[disposition_col].str.upper() == 'CONFIRMED').astype(int)
+                    logger.info(f"  Created is_confirmed from {disposition_col}")
+            else:
+                logger.error(f"  No disposition column found! Columns: {df.columns.tolist()[:10]}...")
+                continue
+        
         logger.info(f"  Confirmed: {(df['is_confirmed']==1).sum()}, "
                    f"Candidates: {(df['is_confirmed']==0).sum()}")
 
         # Map to unified column names
         unified_df = pd.DataFrame()
-        unified_df['dataset_source'] = dataset_name
-        unified_df['is_confirmed'] = df['is_confirmed']
+        unified_df['is_confirmed'] = df['is_confirmed'].values  # Add data first
 
         for unified_name, mapping in UNIFIED_FEATURES.items():
             original_col = mapping[dataset_name]
             if original_col and original_col in df.columns:
-                unified_df[unified_name] = df[original_col]
+                unified_df[unified_name] = df[original_col].values
             else:
                 unified_df[unified_name] = np.nan
+        
+        # Add dataset_source after creating rows
+        unified_df['dataset_source'] = dataset_name
 
         datasets[dataset_name] = unified_df
         logger.info(f"  Unified columns: {unified_df.shape[1]}")
@@ -182,6 +226,10 @@ def load_and_unify_datasets():
     logger.info(f"Combined dataset: {combined_df.shape}")
     logger.info(f"  Total confirmed: {(combined_df['is_confirmed']==1).sum()}")
     logger.info(f"  Total candidates: {(combined_df['is_confirmed']==0).sum()}")
+    logger.info(f"  Dataset_source column present: {'dataset_source' in combined_df.columns}")
+    if 'dataset_source' in combined_df.columns:
+        logger.info(f"  Dataset_source unique: {combined_df['dataset_source'].unique()}")
+        logger.info(f"  Dataset_source counts: {combined_df['dataset_source'].value_counts().to_dict()}")
 
     return combined_df, datasets
 
@@ -306,17 +354,33 @@ def smart_imputation(df, feature_cols):
 
     # Median imputation for stellar parameters
     if len(stellar_features) > 0:
-        stellar_imputer = SimpleImputer(strategy='median')
-        df_imputed[stellar_features] = stellar_imputer.fit_transform(df[stellar_features])
-        joblib.dump(stellar_imputer, PROJECT_PATHS['metadata'] / 'stellar_imputer.pkl')
-        logger.info("✓ Applied median imputation to stellar features")
+        # Filter out columns that are all NaN
+        stellar_features_valid = [col for col in stellar_features if df[col].notna().any()]
+        if len(stellar_features_valid) > 0:
+            stellar_imputer = SimpleImputer(strategy='median')
+            df_imputed[stellar_features_valid] = stellar_imputer.fit_transform(df[stellar_features_valid])
+            joblib.dump(stellar_imputer, PROJECT_PATHS['metadata'] / 'stellar_imputer.pkl')
+            logger.info(f"✓ Applied median imputation to {len(stellar_features_valid)} stellar features")
+        if len(stellar_features_valid) < len(stellar_features):
+            # Fill remaining all-NaN columns with 0
+            all_nan_cols = [col for col in stellar_features if col not in stellar_features_valid]
+            df_imputed[all_nan_cols] = 0
+            logger.info(f"✓ Filled {len(all_nan_cols)} all-NaN stellar columns with 0")
 
     # KNN imputation for planetary parameters (preserves correlations)
     if len(planetary_features) > 0:
-        knn_imputer = KNNImputer(n_neighbors=5, weights='distance')
-        df_imputed[planetary_features] = knn_imputer.fit_transform(df[planetary_features])
-        joblib.dump(knn_imputer, PROJECT_PATHS['metadata'] / 'planetary_imputer.pkl')
-        logger.info("✓ Applied KNN imputation to planetary features")
+        # Filter out columns that are all NaN
+        planetary_features_valid = [col for col in planetary_features if df[col].notna().any()]
+        if len(planetary_features_valid) > 0:
+            knn_imputer = KNNImputer(n_neighbors=5, weights='distance')
+            df_imputed[planetary_features_valid] = knn_imputer.fit_transform(df[planetary_features_valid])
+            joblib.dump(knn_imputer, PROJECT_PATHS['metadata'] / 'planetary_imputer.pkl')
+            logger.info(f"✓ Applied KNN imputation to {len(planetary_features_valid)} planetary features")
+        if len(planetary_features_valid) < len(planetary_features):
+            # Fill remaining all-NaN columns with 0
+            all_nan_cols = [col for col in planetary_features if col not in planetary_features_valid]
+            df_imputed[all_nan_cols] = 0
+            logger.info(f"✓ Filled {len(all_nan_cols)} all-NaN planetary columns with 0")
 
     # Zero imputation for error terms (missing errors = high confidence)
     if len(error_features) > 0:
@@ -325,10 +389,18 @@ def smart_imputation(df, feature_cols):
 
     # Median for remaining features
     if len(other_features) > 0:
-        other_imputer = SimpleImputer(strategy='median')
-        df_imputed[other_features] = other_imputer.fit_transform(df[other_features])
-        joblib.dump(other_imputer, PROJECT_PATHS['metadata'] / 'other_imputer.pkl')
-        logger.info("✓ Applied median imputation to other features")
+        # Filter out columns that are all NaN
+        other_features_valid = [col for col in other_features if df[col].notna().any()]
+        if len(other_features_valid) > 0:
+            other_imputer = SimpleImputer(strategy='median')
+            df_imputed[other_features_valid] = other_imputer.fit_transform(df[other_features_valid])
+            joblib.dump(other_imputer, PROJECT_PATHS['metadata'] / 'other_imputer.pkl')
+            logger.info(f"✓ Applied median imputation to {len(other_features_valid)} other features")
+        if len(other_features_valid) < len(other_features):
+            # Fill remaining all-NaN columns with 0
+            all_nan_cols = [col for col in other_features if col not in other_features_valid]
+            df_imputed[all_nan_cols] = 0
+            logger.info(f"✓ Filled {len(all_nan_cols)} all-NaN other columns with 0")
 
     return df_imputed
 
@@ -345,6 +417,10 @@ def dataset_specific_smote(df):
     X = df.drop(columns=['is_confirmed', 'dataset_source'])
     y = df['is_confirmed']
     dataset_source = df['dataset_source']
+    
+    # Debug: Check what values are in dataset_source
+    logger.info(f"Dataset source unique values: {dataset_source.unique()}")
+    logger.info(f"Dataset source value counts: {dataset_source.value_counts().to_dict()}")
 
     # Initialize lists for combined data
     X_resampled_list = []
@@ -354,6 +430,7 @@ def dataset_specific_smote(df):
     # Process each dataset separately
     for dataset_name in ['k2', 'koi', 'toi']:
         mask = dataset_source == dataset_name
+        logger.info(f"Checking {dataset_name}: mask sum = {mask.sum()}")
         X_subset = X[mask]
         y_subset = y[mask]
 
@@ -466,6 +543,9 @@ def main():
         # Step 2: Engineer features
         logger.info("\nSTEP 2: Engineering domain-specific features...")
         df_engineered, engineered_features = create_engineered_features(combined_df)
+        logger.info(f"After engineering - dataset_source present: {'dataset_source' in df_engineered.columns}")
+        if 'dataset_source' in df_engineered.columns:
+            logger.info(f"After engineering - dataset_source unique: {df_engineered['dataset_source'].unique()}")
 
         # Step 3: Identify feature columns
         feature_cols = [col for col in df_engineered.columns 
@@ -476,6 +556,9 @@ def main():
         # Step 4: Smart imputation
         logger.info("\nSTEP 3: Applying smart imputation...")
         df_imputed = smart_imputation(df_engineered, feature_cols)
+        logger.info(f"After imputation - dataset_source present: {'dataset_source' in df_imputed.columns}")
+        if 'dataset_source' in df_imputed.columns:
+            logger.info(f"After imputation - dataset_source unique: {df_imputed['dataset_source'].unique()}")
 
         # Step 5: Dataset-specific SMOTE
         logger.info("\nSTEP 4: Applying dataset-specific SMOTE...")
@@ -507,11 +590,23 @@ def main():
 
         # Step 7: Save processed data
         logger.info("\nSTEP 6: Saving processed data...")
+        
+        # Save unified format
         output_file = PROJECT_PATHS['data_processed'] / 'unified_exoplanet_data.csv'
         X_normalized['is_confirmed'] = y_final.values
         X_normalized.to_csv(output_file, index=False)
-
-        logger.info(f"✓ Saved processed data to: {output_file}")
+        logger.info(f"✓ Saved unified data to: {output_file}")
+        
+        # Also save in training-ready format (for compatibility with model-training.py)
+        features_only = X_normalized.drop(columns=['is_confirmed', 'dataset_source'])
+        features_file = PROJECT_PATHS['data_processed'] / 'features_processed.csv'
+        labels_file = PROJECT_PATHS['data_processed'] / 'labels_processed.npy'
+        
+        features_only.to_csv(features_file, index=False)
+        np.save(labels_file, y_final.values)
+        
+        logger.info(f"✓ Saved features to: {features_file}")
+        logger.info(f"✓ Saved labels to: {labels_file}")
 
         # Step 8: Save metadata
         metadata = {
