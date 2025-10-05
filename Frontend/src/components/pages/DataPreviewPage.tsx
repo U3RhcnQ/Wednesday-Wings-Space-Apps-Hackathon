@@ -82,21 +82,50 @@ const DataPreviewPage: React.FC = () => {
       const previewResponse = await fetch(
         `${API_BASE_URL}/data/preview/${filename}?rows=50${selectedColumns.length > 0 ? `&columns=${selectedColumns.join(',')}` : ''}`
       );
+      
+      if (!previewResponse.ok) {
+        throw new Error(`Preview failed: ${previewResponse.statusText}`);
+      }
+      
       const previewData = await previewResponse.json();
       setPreview(previewData);
 
-      // Load recommendations
-      const recResponse = await fetch(`${API_BASE_URL}/data/recommendations/${filename}`);
-      const recData = await recResponse.json();
-      setRecommendations(recData);
+      // Load recommendations (handle failures gracefully)
+      try {
+        const recResponse = await fetch(`${API_BASE_URL}/data/recommendations/${filename}`);
+        if (recResponse.ok) {
+          const recData = await recResponse.json();
+          setRecommendations(recData);
+        } else {
+          console.warn('Recommendations endpoint failed:', recResponse.statusText);
+          setRecommendations(null);
+        }
+      } catch (recError) {
+        console.warn('Failed to load recommendations:', recError);
+        setRecommendations(null);
+      }
 
-      // Load visualizations
-      const vizResponse = await fetch(`${API_BASE_URL}/data/visualize/${filename}?chart_type=overview`);
-      const vizData = await vizResponse.json();
-      setChartData(vizData.chart_data);
+      // Load visualizations (handle failures gracefully)
+      try {
+        const vizResponse = await fetch(`${API_BASE_URL}/data/visualize/${filename}?chart_type=overview`);
+        if (vizResponse.ok) {
+          const vizData = await vizResponse.json();
+          setChartData(vizData.chart_data || '');
+        } else {
+          console.warn('Visualization endpoint failed:', vizResponse.statusText);
+          setChartData('');
+        }
+      } catch (vizError) {
+        console.warn('Failed to load visualizations:', vizError);
+        setChartData('');
+      }
 
     } catch (error) {
       console.error('Error previewing data:', error);
+      // Reset states on major failure
+      setPreview(null);
+      setRecommendations(null);
+      setChartData('');
     } finally {
       setLoading(false);
     }
@@ -538,7 +567,7 @@ const DataPreviewPage: React.FC = () => {
       case 'visualizations':
         return (
           <div className="space-y-6">
-            {chartData && (
+            {chartData ? (
               <div className="nasa-panel rounded-lg p-6">
                 <h3 className="text-xl font-semibold mb-4 text-cyan-400">📈 Data Overview Charts</h3>
                 <div className="flex justify-center">
@@ -546,8 +575,37 @@ const DataPreviewPage: React.FC = () => {
                     src={`data:image/png;base64,${chartData}`} 
                     alt="Data visualization" 
                     className="max-w-full h-auto rounded border border-gray-600"
+                    onError={(e) => {
+                      console.error('Failed to load chart image');
+                      (e.target as HTMLImageElement).style.display = 'none';
+                    }}
                   />
                 </div>
+              </div>
+            ) : loading ? (
+              <div className="nasa-panel rounded-lg p-6 text-center">
+                <div className="animate-spin text-4xl mb-4">📊</div>
+                <h3 className="text-xl font-semibold mb-2 text-cyan-400">Generating Visualizations...</h3>
+                <p className="text-gray-400">Please wait while we create comprehensive charts for your data</p>
+              </div>
+            ) : (
+              <div className="nasa-panel rounded-lg p-6 text-center">
+                <div className="text-6xl mb-4">📊</div>
+                <h3 className="text-xl font-semibold mb-2 text-gray-400">Visualizations Unavailable</h3>
+                <p className="text-gray-500 mb-4">
+                  Unable to generate charts for this dataset. This may be due to:
+                </p>
+                <ul className="text-left text-gray-500 space-y-2 max-w-md mx-auto">
+                  <li>• Data format not supported for visualization</li>
+                  <li>• Server-side visualization service unavailable</li>
+                  <li>• Dataset too large or complex to visualize</li>
+                </ul>
+                <button
+                  onClick={() => previewData(selectedFile)}
+                  className="mt-4 px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-500 transition-colors"
+                >
+                  🔄 Retry Visualization
+                </button>
               </div>
             )}
           </div>

@@ -531,6 +531,318 @@ async def preview_data(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Preview failed: {str(e)}")
 
+@app.get("/data/recommendations/{filename}")
+async def get_data_recommendations(filename: str):
+    """
+    Generate data quality recommendations and insights for a dataset
+    """
+    try:
+        file_path = UPLOAD_DIR / filename
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Determine file type and read accordingly
+        file_extension = file_path.suffix.lower()
+        
+        if file_extension == '.csv':
+            df = pd.read_csv(file_path)
+        elif file_extension in ['.xlsx', '.xls']:
+            df = pd.read_excel(file_path)
+        elif file_extension == '.json':
+            df = pd.read_json(file_path)
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file format")
+        
+        recommendations = {
+            "data_quality_issues": [],
+            "preprocessing_suggestions": [],
+            "model_recommendations": [],
+            "feature_engineering_ideas": [],
+            "data_insights": []
+        }
+        
+        # Data Quality Issues
+        total_rows = len(df)
+        missing_data = df.isnull().sum()
+        
+        for column in df.columns:
+            missing_pct = (missing_data[column] / total_rows) * 100
+            
+            if missing_pct > 50:
+                recommendations["data_quality_issues"].append({
+                    "type": "high_missing_data",
+                    "severity": "high",
+                    "column": column,
+                    "message": f"Column '{column}' has {missing_pct:.1f}% missing values",
+                    "suggestion": "Consider dropping this column or using advanced imputation techniques"
+                })
+            elif missing_pct > 20:
+                recommendations["data_quality_issues"].append({
+                    "type": "moderate_missing_data",
+                    "severity": "medium",
+                    "column": column,
+                    "message": f"Column '{column}' has {missing_pct:.1f}% missing values",
+                    "suggestion": "Consider imputation strategies like mean/median for numeric or mode for categorical"
+                })
+        
+        # Check for duplicates
+        duplicate_pct = (df.duplicated().sum() / total_rows) * 100
+        if duplicate_pct > 10:
+            recommendations["data_quality_issues"].append({
+                "type": "high_duplicates",
+                "severity": "medium",
+                "message": f"{duplicate_pct:.1f}% of rows are duplicates",
+                "suggestion": "Consider removing duplicate rows or investigating data collection process"
+            })
+        
+        # Preprocessing Suggestions
+        numeric_columns = df.select_dtypes(include=[np.number]).columns
+        categorical_columns = df.select_dtypes(include=['object']).columns
+        
+        if len(numeric_columns) > 0:
+            recommendations["preprocessing_suggestions"].append({
+                "type": "scaling",
+                "message": f"Dataset has {len(numeric_columns)} numeric columns",
+                "suggestion": "Consider standardization or normalization for machine learning models"
+            })
+        
+        if len(categorical_columns) > 0:
+            high_cardinality_cols = []
+            for col in categorical_columns:
+                unique_count = df[col].nunique()
+                if unique_count > 50:
+                    high_cardinality_cols.append(col)
+            
+            if high_cardinality_cols:
+                recommendations["preprocessing_suggestions"].append({
+                    "type": "high_cardinality",
+                    "message": f"Columns with high cardinality: {', '.join(high_cardinality_cols)}",
+                    "suggestion": "Consider target encoding, feature hashing, or grouping rare categories"
+                })
+        
+        # Model Recommendations
+        if total_rows > 10000:
+            recommendations["model_recommendations"].append({
+                "type": "large_dataset",
+                "message": f"Large dataset with {total_rows:,} rows",
+                "suggestion": "Consider using ensemble methods like Random Forest or XGBoost for better performance"
+            })
+        elif total_rows < 1000:
+            recommendations["model_recommendations"].append({
+                "type": "small_dataset",
+                "message": f"Small dataset with {total_rows:,} rows",
+                "suggestion": "Consider simpler models to avoid overfitting, or data augmentation techniques"
+            })
+        
+        # Feature Engineering Ideas
+        if len(numeric_columns) > 1:
+            recommendations["feature_engineering_ideas"].append({
+                "type": "feature_interactions",
+                "message": f"Multiple numeric columns ({len(numeric_columns)}) detected",
+                "suggestion": "Consider creating polynomial features or interaction terms between variables"
+            })
+        
+        # Data Insights
+        recommendations["data_insights"].append({
+            "type": "dataset_overview",
+            "message": f"Dataset contains {len(df.columns)} features and {total_rows:,} samples"
+        })
+        
+        completeness = (1 - df.isnull().sum().sum() / (df.shape[0] * df.shape[1])) * 100
+        recommendations["data_insights"].append({
+            "type": "completeness",
+            "message": f"Overall data completeness: {completeness:.1f}%"
+        })
+        
+        return recommendations
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Recommendations failed: {str(e)}")
+
+@app.get("/data/visualize/{filename}")
+async def visualize_data(filename: str, chart_type: str = "overview"):
+    """
+    Generate data visualizations for a dataset
+    """
+    try:
+        file_path = UPLOAD_DIR / filename
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Determine file type and read accordingly
+        file_extension = file_path.suffix.lower()
+        
+        if file_extension == '.csv':
+            df = pd.read_csv(file_path)
+        elif file_extension in ['.xlsx', '.xls']:
+            df = pd.read_excel(file_path)
+        elif file_extension == '.json':
+            df = pd.read_json(file_path)
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file format")
+        
+        # Set style for better-looking plots
+        plt.style.use('dark_background')
+        sns.set_palette("husl")
+        
+        if chart_type == "overview":
+            # Create a comprehensive overview plot
+            fig = plt.figure(figsize=(16, 12))
+            
+            # Get numeric and categorical columns
+            numeric_columns = df.select_dtypes(include=[np.number]).columns
+            categorical_columns = df.select_dtypes(include=['object']).columns
+            
+            if len(numeric_columns) > 0:
+                # 1. Missing values heatmap
+                plt.subplot(2, 3, 1)
+                missing_data = df.isnull().sum()
+                if missing_data.sum() > 0:
+                    missing_df = pd.DataFrame({
+                        'Column': missing_data.index,
+                        'Missing_Count': missing_data.values,
+                        'Missing_Percentage': (missing_data.values / len(df)) * 100
+                    })
+                    missing_df = missing_df[missing_df['Missing_Count'] > 0].sort_values('Missing_Count', ascending=False)
+                    
+                    if len(missing_df) > 0:
+                        plt.barh(missing_df['Column'][:10], missing_df['Missing_Percentage'][:10], color='#ff6b6b')
+                        plt.xlabel('Missing Data %')
+                        plt.title('Missing Data by Column', color='white', fontsize=12, fontweight='bold')
+                        plt.gca().tick_params(colors='white')
+                    else:
+                        plt.text(0.5, 0.5, 'No Missing Data', ha='center', va='center', 
+                                transform=plt.gca().transAxes, color='white', fontsize=14)
+                        plt.title('Missing Data Analysis', color='white', fontsize=12, fontweight='bold')
+                else:
+                    plt.text(0.5, 0.5, 'No Missing Data', ha='center', va='center', 
+                            transform=plt.gca().transAxes, color='white', fontsize=14)
+                    plt.title('Missing Data Analysis', color='white', fontsize=12, fontweight='bold')
+                
+                # 2. Data types distribution
+                plt.subplot(2, 3, 2)
+                dtype_counts = df.dtypes.value_counts()
+                colors = ['#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3']
+                plt.pie(dtype_counts.values, labels=[str(dt) for dt in dtype_counts.index], 
+                       autopct='%1.1f%%', colors=colors[:len(dtype_counts)])
+                plt.title('Data Types Distribution', color='white', fontsize=12, fontweight='bold')
+                
+                # 3. Correlation heatmap (if we have multiple numeric columns)
+                if len(numeric_columns) > 1:
+                    plt.subplot(2, 3, 3)
+                    numeric_df = df[numeric_columns].corr()
+                    mask = np.triu(np.ones_like(numeric_df, dtype=bool))
+                    sns.heatmap(numeric_df, annot=True, cmap='RdYlBu_r', center=0,
+                               square=True, mask=mask, cbar_kws={'shrink': 0.8})
+                    plt.title('Feature Correlations', color='white', fontsize=12, fontweight='bold')
+                else:
+                    plt.text(0.5, 0.5, 'Need 2+ numeric\ncolumns for correlation', 
+                            ha='center', va='center', transform=plt.gca().transAxes, 
+                            color='white', fontsize=12)
+                    plt.title('Feature Correlations', color='white', fontsize=12, fontweight='bold')
+                
+                # 4. Numeric columns distribution
+                if len(numeric_columns) > 0:
+                    plt.subplot(2, 3, 4)
+                    # Select up to 5 numeric columns for distribution plot
+                    cols_to_plot = numeric_columns[:5]
+                    for i, col in enumerate(cols_to_plot):
+                        plt.hist(df[col].dropna(), alpha=0.7, label=col, bins=30)
+                    plt.xlabel('Value')
+                    plt.ylabel('Frequency')
+                    plt.title('Numeric Distributions', color='white', fontsize=12, fontweight='bold')
+                    plt.legend()
+                    plt.gca().tick_params(colors='white')
+                
+                # 5. Dataset size info
+                plt.subplot(2, 3, 5)
+                stats_text = f"""Dataset Overview:
+                
+Rows: {len(df):,}
+Columns: {len(df.columns)}
+Numeric: {len(numeric_columns)}
+Categorical: {len(categorical_columns)}
+
+Memory Usage: {df.memory_usage(deep=True).sum() / 1024 / 1024:.1f} MB
+Completeness: {((1 - df.isnull().sum().sum() / (df.shape[0] * df.shape[1])) * 100):.1f}%"""
+                
+                plt.text(0.1, 0.9, stats_text, transform=plt.gca().transAxes, 
+                        fontsize=11, verticalalignment='top', color='white',
+                        bbox=dict(boxstyle='round', facecolor='black', alpha=0.8))
+                plt.axis('off')
+                plt.title('Dataset Statistics', color='white', fontsize=12, fontweight='bold')
+                
+                # 6. Top categorical values (if any)
+                plt.subplot(2, 3, 6)
+                if len(categorical_columns) > 0:
+                    # Get the first categorical column with reasonable number of unique values
+                    cat_col = None
+                    for col in categorical_columns:
+                        if df[col].nunique() <= 20:  # Don't plot if too many categories
+                            cat_col = col
+                            break
+                    
+                    if cat_col:
+                        value_counts = df[cat_col].value_counts().head(10)
+                        plt.barh(range(len(value_counts)), value_counts.values, color='#feca57')
+                        plt.yticks(range(len(value_counts)), value_counts.index)
+                        plt.xlabel('Count')
+                        plt.title(f'Top Values: {cat_col}', color='white', fontsize=12, fontweight='bold')
+                        plt.gca().tick_params(colors='white')
+                    else:
+                        plt.text(0.5, 0.5, 'High cardinality\ncategorical data', 
+                                ha='center', va='center', transform=plt.gca().transAxes, 
+                                color='white', fontsize=12)
+                        plt.title('Categorical Analysis', color='white', fontsize=12, fontweight='bold')
+                else:
+                    plt.text(0.5, 0.5, 'No categorical\ncolumns found', 
+                            ha='center', va='center', transform=plt.gca().transAxes, 
+                            color='white', fontsize=12)
+                    plt.title('Categorical Analysis', color='white', fontsize=12, fontweight='bold')
+            
+            else:
+                # If no numeric columns, create a simpler overview
+                plt.subplot(1, 2, 1)
+                dtype_counts = df.dtypes.value_counts()
+                plt.pie(dtype_counts.values, labels=[str(dt) for dt in dtype_counts.index], autopct='%1.1f%%')
+                plt.title('Data Types Distribution', color='white', fontsize=14, fontweight='bold')
+                
+                plt.subplot(1, 2, 2)
+                stats_text = f"""Dataset Overview:
+                
+Rows: {len(df):,}
+Columns: {len(df.columns)}
+Memory Usage: {df.memory_usage(deep=True).sum() / 1024 / 1024:.1f} MB
+Completeness: {((1 - df.isnull().sum().sum() / (df.shape[0] * df.shape[1])) * 100):.1f}%"""
+                
+                plt.text(0.1, 0.5, stats_text, transform=plt.gca().transAxes, 
+                        fontsize=12, verticalalignment='center', color='white')
+                plt.axis('off')
+                plt.title('Dataset Statistics', color='white', fontsize=14, fontweight='bold')
+            
+            plt.tight_layout()
+            plt.subplots_adjust(hspace=0.3, wspace=0.3)
+            
+            # Convert plot to base64 string
+            buffer = io.BytesIO()
+            plt.savefig(buffer, format='png', facecolor='black', bbox_inches='tight', dpi=100)
+            buffer.seek(0)
+            plot_data = base64.b64encode(buffer.getvalue()).decode()
+            buffer.close()
+            plt.close()
+            
+            return {
+                "chart_data": plot_data,
+                "chart_type": chart_type,
+                "message": "Visualization generated successfully"
+            }
+        
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported chart type: {chart_type}")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Visualization failed: {str(e)}")
+
 if __name__ == "__main__":
     # Run the server
     uvicorn.run(
