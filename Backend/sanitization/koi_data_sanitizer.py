@@ -37,11 +37,11 @@ def find_koi_data_file():
 
     # Possible file locations in order of preference
     possible_locations = [
-        # Primary location - new datasets directory
-        backend_root / 'datasets' / 'koi.csv',
-        backend_root / 'data' / 'raw' / 'koi.csv',  # Current actual location
+        # Primary location - raw data with all dispositions
+        backend_root / 'data' / 'raw' / 'koi.csv',
         
         # Fallback locations
+        backend_root / 'datasets' / 'koi.csv',
         backend_root / 'cleaned_datasets' / 'koi_cleaned.csv',
         backend_root / 'data' / 'raw' / 'kepler_koi_raw.csv',
 
@@ -157,9 +157,9 @@ def filter_disposition_koi(df, column_mapping):
     for disp, count in disposition_counts.items():
         logging.info(f'  {disp}: {count}')
 
-    # Filter for confirmed planets and candidates
+    # Filter for confirmed planets, candidates, and false positives (for ML training)
     valid_dispositions = df[disp_col].astype(str).str.upper()
-    valid_mask = valid_dispositions.str.contains('CONFIRMED|CANDIDATE|CP', na=False)
+    valid_mask = valid_dispositions.str.contains('CONFIRMED|CANDIDATE|CP|FALSE POSITIVE|FP', na=False)
 
     df_filtered = df[valid_mask].copy()
 
