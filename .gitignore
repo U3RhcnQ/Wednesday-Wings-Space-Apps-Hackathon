@@ -147,3 +147,7 @@ Backend/data/processed/labels_processed.npy
 Backend/ml_pipeline/plots/gradient_boosting_curves.png
 Backend/ml_pipeline/plots/lightgbm_curves.png
 Backend/ml_pipeline/plots/xgboost_curves.png
+Backend/ml_pipeline/plots/adaboost_curves.png
+Backend/ml_pipeline/plots/comprehensive_model_analysis.png
+Backend/ml_pipeline/plots/voting_ensemble_curves.png
+Backend/ml_pipeline/plots/stacking_ensemble_curves.png

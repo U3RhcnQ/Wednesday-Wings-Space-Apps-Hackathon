@@ -70,6 +70,27 @@ def format_time(seconds):
     else:
         return f"{seconds/3600:.1f}h"
 
+def convert_to_serializable(obj):
+    """
+    Recursively convert numpy/pandas types to Python native types for JSON serialization.
+    Handles int64 keys and values that cause JSON serialization errors.
+    """
+    if isinstance(obj, dict):
+        return {convert_to_serializable(key): convert_to_serializable(value) 
+                for key, value in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [convert_to_serializable(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32, np.float16)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    else:
+        return obj
+
 class ProgressTracker:
     """Clean progress tracking with time estimates"""
     def __init__(self, total_steps, desc="Processing"):
@@ -228,9 +249,9 @@ class ExoplanetModelTrainer:
             'XGBoost': XGBClassifier(
                 objective='binary:logistic', n_estimators=2000, learning_rate=0.05,
                 max_depth=20, min_child_weight=2, subsample=0.8, colsample_bytree=0.8,
-                tree_method='gpu_hist',  # H100 GPU acceleration
-                predictor='gpu_predictor',  # H100 optimized inference
-                gpu_id=0, n_jobs=-1, random_state=42, verbosity=1,
+                tree_method='hist',  # H100 GPU acceleration
+                device='cuda:0',  # H100 GPU device
+                n_jobs=-1, random_state=42, verbosity=1,
                 max_bin=256  # H100 optimized
             ),
             'Gradient Boosting': GradientBoostingClassifier(
@@ -364,7 +385,9 @@ class ExoplanetModelTrainer:
         metadata_filename = f"{model_name.replace(' ', '_').lower()}_metadata.json"
         metadata_path = f"metadata/{metadata_filename}"
         with open(metadata_path, 'w') as f:
-            json.dump(model_metadata, f, indent=4, default=str)
+            # Convert to serializable types before saving
+            serializable_metadata = convert_to_serializable(model_metadata)
+            json.dump(serializable_metadata, f, indent=4, default=str)
     
     def _generate_model_curves(self, model_name, y_true, y_pred_proba):
         """Generate ROC and Precision-Recall curves for individual models"""
@@ -710,7 +733,9 @@ class ExoplanetModelTrainer:
         # Save complete metadata
         metadata_path = 'metadata/complete_training_metadata.json'
         with open(metadata_path, 'w') as f:
-            json.dump(self.metadata, f, indent=4, default=str)
+            # Convert to serializable types before saving
+            serializable_metadata = convert_to_serializable(self.metadata)
+            json.dump(serializable_metadata, f, indent=4, default=str)
         
         total_time = time.time() - pipeline_start
         summary = self.metadata['training_summary']
