@@ -37,11 +37,11 @@ def find_toi_data_file():
 
     # Possible file locations in order of preference
     possible_locations = [
-        # Primary location - new datasets directory
-        backend_root / 'datasets' / 'toi.csv',
-        backend_root / 'data' / 'raw' / 'toi.csv',  # Current actual location
+        # Primary location - raw data with all dispositions
+        backend_root / 'data' / 'raw' / 'toi.csv',
         
         # Fallback locations
+        backend_root / 'datasets' / 'toi.csv',
         backend_root / 'cleaned_datasets' / 'toi_cleaned.csv',
         backend_root / 'data' / 'raw' / 'tess_toi_raw.csv',
 
@@ -158,9 +158,9 @@ def filter_disposition_toi(df, column_mapping):
     for disp, count in disposition_counts.items():
         logging.info(f'  {disp}: {count}')
 
-    # Filter for confirmed planets and candidates
+    # Filter for confirmed planets, candidates, and false positives (for ML training)
     valid_dispositions = df[disp_col].astype(str).str.upper()
-    valid_mask = valid_dispositions.str.contains('CP|CONFIRMED|CANDIDATE|PC', na=False)
+    valid_mask = valid_dispositions.str.contains('CP|CONFIRMED|CANDIDATE|PC|APC|FALSE POSITIVE|FP', na=False)
 
     df_filtered = df[valid_mask].copy()
 

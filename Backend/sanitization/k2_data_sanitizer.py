@@ -37,11 +37,11 @@ def find_k2_data_file():
 
     # Possible file locations in order of preference
     possible_locations = [
-        # Primary location - new datasets directory
-        backend_root / 'datasets' / 'k2.csv',
-        backend_root / 'data' / 'raw' / 'k2.csv',  # Current actual location
+        # Primary location - raw data with all dispositions
+        backend_root / 'data' / 'raw' / 'k2.csv',
         
         # Fallback locations
+        backend_root / 'datasets' / 'k2.csv',
         backend_root / 'cleaned_datasets' / 'k2_cleaned.csv',
         backend_root / 'data' / 'raw' / 'k2_candidates_raw.csv',
 
@@ -154,9 +154,9 @@ def filter_disposition_k2(df, column_mapping):
     for disp, count in disposition_counts.items():
         logging.info(f'  {disp}: {count}')
 
-    # Filter for confirmed planets and candidates
+    # Filter for confirmed planets, candidates, and false positives (for ML training)
     valid_dispositions = df[disp_col].astype(str).str.upper()
-    valid_mask = valid_dispositions.str.contains('CONFIRMED|CANDIDATE|CP|K2-', na=False)
+    valid_mask = valid_dispositions.str.contains('CONFIRMED|CANDIDATE|CP|K2-|FALSE POSITIVE|FP', na=False)
 
     df_filtered = df[valid_mask].copy()
 
