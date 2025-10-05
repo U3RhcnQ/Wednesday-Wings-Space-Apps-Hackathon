@@ -178,6 +178,47 @@ def run_sanitizer(dataset_name, config):
         return False
 
 
+def run_normalization():
+    """Run the normalization process after successful sanitization"""
+    try:
+        backend_root = detect_backend_root()
+        normalizer_script = backend_root / 'normalisation' / 'improved_normalizer.py'
+        
+        if not normalizer_script.exists():
+            logging.warning(f'Normalization script not found: {normalizer_script}')
+            return False
+        
+        logging.info('Starting data normalization...')
+        print('🔄 Starting data normalization...')
+        
+        # Import and run the normalizer
+        import sys
+        sys.path.insert(0, str(backend_root / 'normalisation'))
+        
+        try:
+            import improved_normalizer
+            success = improved_normalizer.main()
+            
+            if success:
+                logging.info('✓ Data normalization completed successfully')
+                print('   ✓ Data normalization completed successfully')
+                return True
+            else:
+                logging.error('✗ Data normalization failed')
+                print('   ✗ Data normalization failed')
+                return False
+                
+        except Exception as e:
+            logging.error(f'Error during normalization: {e}')
+            print(f'   ✗ Normalization error: {e}')
+            return False
+            
+    except Exception as e:
+        logging.error(f'Failed to run normalization: {e}')
+        print(f'   ✗ Failed to run normalization: {e}')
+        return False
+
+
 def check_output_files():
     """Check if sanitized output files were created"""
     backend_root = detect_backend_root()
@@ -207,6 +248,30 @@ def check_output_files():
             logging.info(f'  ✓ {plots_dir} directory ({len(plot_files)} plot files)')
     else:
         logging.info(f'  ✗ {plots_dir} directory (not found)')
+
+    return len(found_files) > 0
+
+
+def check_normalized_files():
+    """Check if normalized output files were created"""
+    backend_root = detect_backend_root()
+
+    normalized_outputs = [
+        backend_root / 'data' / 'normalised' / 'k2_normalised.csv',
+        backend_root / 'data' / 'normalised' / 'koi_normalised.csv',
+        backend_root / 'data' / 'normalised' / 'toi_normalised.csv'
+    ]
+
+    logging.info('Checking for normalized files:')
+    found_files = []
+
+    for output_file in normalized_outputs:
+        if output_file.exists():
+            file_size = output_file.stat().st_size / (1024 * 1024)  # Size in MB
+            logging.info(f'  ✓ {output_file} ({file_size:.2f} MB)')
+            found_files.append(output_file)
+        else:
+            logging.info(f'  ✗ {output_file} (not found)')
 
     return len(found_files) > 0
 
@@ -255,6 +320,34 @@ def main():
 
     # Generate summary
     print(f'\n📋 Summary: {successful_runs}/{len(results)} datasets processed successfully')
+
+    # Check if output files were created
+    if successful_runs > 0:
+        output_check = check_output_files()
+        if output_check:
+            # Run normalization automatically after successful sanitization
+            print('\n🔄 Running data normalization...')
+            normalization_success = run_normalization()
+            
+            if normalization_success:
+                # Verify normalized files were created
+                normalized_check = check_normalized_files()
+                if normalized_check:
+                    print('\n🎉 Complete pipeline finished successfully!')
+                    print('   ✓ Data sanitization completed')
+                    print('   ✓ Data normalization completed')
+                    print('   📁 Normalized data ready for ML training in: Backend/data/normalised/')
+                else:
+                    print('\n⚠️  Normalization completed but files not found')
+                    print('   ✓ Data sanitization completed')
+                    print('   ⚠️ Data normalization completed but output files missing')
+            else:
+                print('\n⚠️  Sanitization completed but normalization failed')
+                print('   ✓ Data sanitization completed')
+                print('   ✗ Data normalization failed')
+                print('   💡 You can run normalization manually: python Backend/normalisation/improved_normalizer.py')
+        else:
+            print('⚠️  No output files found - skipping normalization')
 
     # Return success if at least one sanitizer worked
     return successful_runs > 0
