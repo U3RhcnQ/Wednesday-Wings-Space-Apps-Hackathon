@@ -98,6 +98,11 @@ class RobustPipelineOrchestrator:
     def run_stage(self, stage_name, script_name, description, working_dir=None, required=True):
         """Run a pipeline stage with robust error handling"""
         stage_start = datetime.now()
+        
+        print(f"\n▶️  Starting: {stage_name}")
+        print(f"   Script: {script_name}")
+        print(f"   Description: {description}")
+        sys.stdout.flush()
 
         # Find the script
         if working_dir:
@@ -135,6 +140,7 @@ class RobustPipelineOrchestrator:
             python_paths.append(existing_pythonpath)
 
         env['PYTHONPATH'] = ':'.join(python_paths)
+        env['PYTHONUNBUFFERED'] = '1'  # Force unbuffered output for real-time display
 
         # Set working directory
         if working_dir:
@@ -143,11 +149,12 @@ class RobustPipelineOrchestrator:
             work_dir = script_path.parent
 
         print()  # Add space before subprocess output
+        sys.stdout.flush()  # Ensure output is displayed
 
         try:
             # Run the script with live output streaming and indentation
             process = subprocess.Popen(
-                [sys.executable, str(script_path)],
+                [sys.executable, '-u', str(script_path)],  # -u for unbuffered output
                 cwd=str(work_dir),
                 env=env,
                 stdout=subprocess.PIPE,
@@ -159,12 +166,12 @@ class RobustPipelineOrchestrator:
 
             # Stream output in real-time with indentation
             for line in process.stdout:
-                print(f"   {line}", end='')
+                print(f"   {line}", end='', flush=True)  # Force flush each line
             
             # Wait for process to complete
             process.wait(timeout=3600)
             
-            print()  # Add space after subprocess output
+            print(flush=True)  # Add space after subprocess output
 
             stage_end = datetime.now()
             stage_duration = (stage_end - stage_start).total_seconds()

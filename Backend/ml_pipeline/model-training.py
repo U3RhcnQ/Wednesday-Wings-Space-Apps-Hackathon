@@ -211,16 +211,16 @@ class ExoplanetModelTrainer:
         models = {
             'Random Forest': RandomForestClassifier(
                 n_estimators=1500, max_depth=35, min_samples_split=4, min_samples_leaf=2,
-                max_features='sqrt', n_jobs=-1, random_state=42, verbose=0
+                max_features='sqrt', n_jobs=-1, random_state=42, verbose=1
             ),
             'Extra Trees': ExtraTreesClassifier(
                 n_estimators=1500, max_depth=35, min_samples_split=4, min_samples_leaf=2,
-                max_features='sqrt', n_jobs=-1, random_state=42, verbose=0
+                max_features='sqrt', n_jobs=-1, random_state=42, verbose=1
             ),
             'LightGBM': LGBMClassifier(
                 objective='binary', n_estimators=2000, learning_rate=0.05, max_depth=25,
                 num_leaves=60, min_child_samples=15, subsample=0.8, colsample_bytree=0.8,
-                n_jobs=-1, random_state=42, verbose=-1,
+                n_jobs=-1, random_state=42, verbose=1,
                 device='gpu', gpu_platform_id=0, gpu_device_id=0,  # H100 GPU acceleration
                 max_bin=255,  # H100 optimized
                 force_col_wise=True
@@ -230,13 +230,13 @@ class ExoplanetModelTrainer:
                 max_depth=20, min_child_weight=2, subsample=0.8, colsample_bytree=0.8,
                 tree_method='gpu_hist',  # H100 GPU acceleration
                 predictor='gpu_predictor',  # H100 optimized inference
-                gpu_id=0, n_jobs=-1, random_state=42, verbosity=0,
+                gpu_id=0, n_jobs=-1, random_state=42, verbosity=1,
                 max_bin=256  # H100 optimized
             ),
             'Gradient Boosting': GradientBoostingClassifier(
                 n_estimators=1200, learning_rate=0.05, max_depth=12,
                 min_samples_split=4, min_samples_leaf=2, subsample=0.85,
-                random_state=42, verbose=0
+                random_state=42, verbose=1
             ),
             'AdaBoost': AdaBoostClassifier(
                 n_estimators=800, learning_rate=0.3, algorithm='SAMME.R', random_state=42
@@ -266,7 +266,9 @@ class ExoplanetModelTrainer:
             start_time = time.time()
             
             # Training
+            print(f"\n🔄 Training {model_name}...", flush=True)
             model.fit(X_train, y_train)
+            print(f"✓ {model_name} training complete, generating predictions...", flush=True)
             
             # Predictions
             y_pred_train = model.predict(X_train)
@@ -305,7 +307,8 @@ class ExoplanetModelTrainer:
             model_performances[model_name] = metrics
             trained_models[model_name] = model
             
-            # Save model and generate curves (silent operations)
+            # Save model and generate curves
+            print(f"💾 Saving {model_name} model and generating visualizations...", flush=True)
             self._save_model_with_metadata(model, model_name, metrics)
             self._generate_model_curves(model_name, y_test, y_pred_proba_test)
             
@@ -425,12 +428,14 @@ class ExoplanetModelTrainer:
         stacking_model = StackingClassifier(
             estimators=base_estimators,
             final_estimator=LogisticRegression(max_iter=2000, n_jobs=-1, random_state=42),
-            cv=5, n_jobs=-1, verbose=0
+            cv=5, n_jobs=-1, verbose=2
         )
         start_time = time.time()
+        print(f"\n🔄 Training Stacking Ensemble (with 5-fold cross-validation)...", flush=True)
         stacking_model.fit(X_train, y_train)
         stacking_time = time.time() - start_time
         
+        print(f"✓ Stacking Ensemble training complete, evaluating...", flush=True)
         stacking_metrics = self._evaluate_ensemble_model(
             stacking_model, X_train, y_train, X_val, y_val, X_test, y_test, 
             'Stacking Ensemble', stacking_time
@@ -438,7 +443,8 @@ class ExoplanetModelTrainer:
         ensemble_models['Stacking Ensemble'] = stacking_model
         ensemble_performances['Stacking Ensemble'] = stacking_metrics
         
-        # Save and generate curves silently
+        # Save and generate curves
+        print(f"💾 Saving Stacking Ensemble model and generating visualizations...", flush=True)
         self._save_model_with_metadata(stacking_model, 'Stacking Ensemble', stacking_metrics)
         self._generate_model_curves('Stacking Ensemble', y_test, stacking_model.predict_proba(X_test)[:, 1])
         
@@ -447,12 +453,14 @@ class ExoplanetModelTrainer:
         
         # Voting Classifier
         voting_model = VotingClassifier(
-            estimators=base_estimators, voting='soft', n_jobs=-1, verbose=0
+            estimators=base_estimators, voting='soft', n_jobs=-1, verbose=True
         )
         start_time = time.time()
+        print(f"\n🔄 Training Voting Ensemble...", flush=True)
         voting_model.fit(X_train, y_train)
         voting_time = time.time() - start_time
         
+        print(f"✓ Voting Ensemble training complete, evaluating...", flush=True)
         voting_metrics = self._evaluate_ensemble_model(
             voting_model, X_train, y_train, X_val, y_val, X_test, y_test,
             'Voting Ensemble', voting_time
@@ -460,7 +468,8 @@ class ExoplanetModelTrainer:
         ensemble_models['Voting Ensemble'] = voting_model
         ensemble_performances['Voting Ensemble'] = voting_metrics
         
-        # Save and generate curves silently
+        # Save and generate curves
+        print(f"💾 Saving Voting Ensemble model and generating visualizations...", flush=True)
         self._save_model_with_metadata(voting_model, 'Voting Ensemble', voting_metrics)
         self._generate_model_curves('Voting Ensemble', y_test, voting_model.predict_proba(X_test)[:, 1])
         
