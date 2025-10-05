@@ -1,6 +1,6 @@
-# Updated KOI Data Sanitizer with Robust Path Detection
+# Updated KOI Data Sanitizer with Train/Test Split
 # NASA Space Apps Challenge 2025
-# Automatically finds data files in the new directory structure
+# Automatically finds data files and splits for proper validation
 
 import numpy as np
 import pandas as pd
@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 import warnings
+from sklearn.model_selection import train_test_split
 
 warnings.filterwarnings('ignore')
 
@@ -98,245 +99,178 @@ def validate_koi_data(file_path):
         'koi_teq': ['koi_teq', 'equilibrium_temp', 'temperature'],
         'koi_sma': ['koi_sma', 'semimajor_axis'],
         'koi_dor': ['koi_dor', 'duration_ratio'],
-        'koi_depth': ['koi_depth', 'transit_depth', 'depth']
     }
 
-    found_columns = {}
-    missing_essential = []
-
-    for essential, variants in essential_columns_variants.items():
-        found = False
+    # Create column mapping
+    column_mapping = {}
+    for standard_name, variants in essential_columns_variants.items():
         for variant in variants:
             if variant in df.columns:
-                found_columns[essential] = variant
-                found = True
+                column_mapping[standard_name] = variant
                 break
 
-        if not found:
-            missing_essential.append(essential)
+    # Check if we found all essential columns
+    missing = set(essential_columns_variants.keys()) - set(column_mapping.keys())
+    if missing:
+        logging.warning(f'Some columns not found, but will proceed: {missing}')
 
-    if missing_essential:
-        logging.warning(f'Some essential KOI columns not found: {missing_essential}')
-        logging.info(f'Available columns: {list(df.columns)[:15]}...')
-        # Continue anyway - we'll work with what we have
+    logging.info(f'KOI data loaded: {df.shape[0]} rows, {df.shape[1]} columns')
+    logging.info(f'Column mapping: {column_mapping}')
 
-    logging.info(f'Loaded {len(df)} KOI data points from {file_path}')
-    logging.info(f'Found columns: {found_columns}')
-
-    return df, found_columns
+    return df, column_mapping
 
 
 def remove_duplicates_koi(df, column_mapping):
     """Remove duplicate KOI entries"""
-    original_count = len(df)
-
-    # Use KepID for deduplication if available
-    if 'kepid' in column_mapping and column_mapping['kepid'] in df.columns:
-        kepid_col = column_mapping['kepid']
-        df = df.drop_duplicates(subset=[kepid_col])
-
-    duplicates_removed = original_count - len(df)
-    if duplicates_removed > 0:
-        logging.info(f'Removed {duplicates_removed} duplicate entries')
-
-    return df
+    kepid_col = column_mapping.get('kepid', 'kepid')
+    
+    if kepid_col not in df.columns:
+        logging.warning(f'KepID column not found, skipping duplicate removal')
+        return df
+    
+    initial_count = len(df)
+    df_cleaned = df.drop_duplicates(subset=[kepid_col], keep='first')
+    removed_count = initial_count - len(df_cleaned)
+    
+    logging.info(f'Removed {removed_count} duplicate KOI entries')
+    
+    return df_cleaned
 
 
 def filter_disposition_koi(df, column_mapping):
-    """Filter KOI data based on disposition"""
-    if 'koi_disposition' not in column_mapping:
-        logging.warning('No disposition column found - skipping disposition filtering')
+    """Filter KOI data by disposition"""
+    disp_col = column_mapping.get('koi_disposition', 'koi_disposition')
+    
+    if disp_col not in df.columns:
+        logging.warning(f'Disposition column not found, skipping disposition filter')
         return df
-
-    disp_col = column_mapping['koi_disposition']
-    original_count = len(df)
-
-    # Analyze current disposition values
-    disposition_counts = df[disp_col].value_counts()
-    logging.info(f'Original disposition distribution:')
-    for disp, count in disposition_counts.items():
+    
+    initial_count = len(df)
+    
+    # Valid dispositions: CONFIRMED, CANDIDATE, FALSE POSITIVE
+    valid_dispositions = ['CONFIRMED', 'CANDIDATE', 'FALSE POSITIVE']
+    
+    # Filter by disposition (case insensitive)
+    mask = df[disp_col].str.upper().isin(valid_dispositions)
+    df_cleaned = df[mask].copy()
+    
+    removed_count = initial_count - len(df_cleaned)
+    logging.info(f'Filtered by disposition: kept {len(df_cleaned)}, removed {removed_count}')
+    
+    # Show disposition distribution
+    disp_counts = df_cleaned[disp_col].value_counts()
+    for disp, count in disp_counts.items():
         logging.info(f'  {disp}: {count}')
-
-    # Filter for confirmed planets, candidates, and false positives (for ML training)
-    valid_dispositions = df[disp_col].astype(str).str.upper()
-    valid_mask = valid_dispositions.str.contains('CONFIRMED|CANDIDATE|CP|FALSE POSITIVE|FP', na=False)
-
-    df_filtered = df[valid_mask].copy()
-
-    filtered_count = len(df_filtered)
-    logging.info(
-        f'Filtered KOI data: {original_count} → {filtered_count} ({filtered_count / original_count * 100:.1f}% retained)')
-
-    return df_filtered
+    
+    return df_cleaned
 
 
 def clean_numerical_columns_koi(df, column_mapping):
-    """Clean numerical columns in KOI data"""
-    numerical_cols = ['koi_period', 'koi_prad', 'koi_teq', 'koi_sma', 'koi_dor', 'koi_depth']
-
-    for col_key in numerical_cols:
-        if col_key in column_mapping:
-            actual_col = column_mapping[col_key]
-            if actual_col in df.columns:
-                # Convert to numeric, replacing invalid values with NaN
-                df[actual_col] = pd.to_numeric(df[actual_col], errors='coerce')
-
-                # Apply reasonable range filters
-                if col_key == 'koi_period':  # Orbital period in days
-                    df[actual_col] = df[actual_col].where((df[actual_col] > 0) & (df[actual_col] < 10000))
-                elif col_key == 'koi_prad':  # Planet radius in Earth radii
-                    df[actual_col] = df[actual_col].where((df[actual_col] > 0) & (df[actual_col] < 50))
-                elif col_key == 'koi_teq':  # Equilibrium temperature in K
-                    df[actual_col] = df[actual_col].where((df[actual_col] > 0) & (df[actual_col] < 5000))
-                elif col_key == 'koi_sma':  # Semi-major axis in AU
-                    df[actual_col] = df[actual_col].where((df[actual_col] > 0) & (df[actual_col] < 100))
-                elif col_key == 'koi_dor':  # Duration ratio
-                    df[actual_col] = df[actual_col].where((df[actual_col] > 0) & (df[actual_col] < 1000))
-                elif col_key == 'koi_depth':  # Transit depth in ppm
-                    df[actual_col] = df[actual_col].where((df[actual_col] > 0) & (df[actual_col] < 100000))
-
-                # Report cleaning results
-                valid_count = df[actual_col].count()
-                total_count = len(df)
-                logging.info(
-                    f'Cleaned {actual_col}: {valid_count}/{total_count} valid values ({valid_count / total_count * 100:.1f}%)')
-
-    return df
-
-
-def generate_koi_quality_report(df, df_original, column_mapping):
-    """Generate quality report for KOI data"""
-    backend_root = detect_backend_root()
-
-    report = {
-        'processing_timestamp': datetime.now().isoformat(),
-        'original_records': len(df_original),
-        'final_records': len(df),
-        'records_retained_pct': (len(df) / len(df_original)) * 100,
-        'column_mapping': column_mapping,
-        'columns_total': len(df.columns),
-        'missing_value_summary': {}
+    """Clean numerical columns with reasonable range checks"""
+    df_cleaned = df.copy()
+    
+    # Define reasonable ranges for key columns
+    numerical_ranges = {
+        'koi_period': (0, 10000),       # Orbital period (days)
+        'koi_prad': (0, 50),             # Planet radius (Earth radii)
+        'koi_teq': (0, 5000),            # Equilibrium temperature (K)
+        'koi_sma': (0, 100),             # Semi-major axis (AU)
     }
+    
+    total_removed = 0
+    
+    for standard_name, (min_val, max_val) in numerical_ranges.items():
+        actual_col = column_mapping.get(standard_name)
+        
+        if actual_col and actual_col in df_cleaned.columns:
+            initial_count = len(df_cleaned)
+            
+            # Remove rows with out-of-range values
+            mask = (
+                (df_cleaned[actual_col].isna()) |  # Keep NaN
+                ((df_cleaned[actual_col] >= min_val) & (df_cleaned[actual_col] <= max_val))
+            )
+            df_cleaned = df_cleaned[mask]
+            
+            removed = initial_count - len(df_cleaned)
+            if removed > 0:
+                logging.info(f'Removed {removed} rows with out-of-range {actual_col} values')
+                total_removed += removed
+    
+    logging.info(f'Total rows removed due to out-of-range values: {total_removed}')
+    
+    return df_cleaned
 
-    # Missing value analysis
-    for col_key, actual_col in column_mapping.items():
-        if actual_col in df.columns:
-            missing_count = df[actual_col].isna().sum()
-            missing_pct = (missing_count / len(df)) * 100
-            report['missing_value_summary'][col_key] = {
-                'column_name': actual_col,
-                'missing_count': int(missing_count),
-                'missing_percentage': float(missing_pct)
-            }
 
-    # Disposition analysis
-    if 'koi_disposition' in column_mapping and column_mapping['koi_disposition'] in df.columns:
-        disp_col = column_mapping['koi_disposition']
-        disposition_dist = df[disp_col].value_counts().to_dict()
-        report['disposition_distribution'] = disposition_dist
-
-    # Save quality report
-    reports_dir = backend_root / 'metadata'
-    reports_dir.mkdir(parents=True, exist_ok=True)
-
-    report_path = reports_dir / 'koi_quality_report.json'
+def generate_koi_quality_report(df_cleaned, df_original, column_mapping):
+    """Generate data quality report"""
+    backend_root = detect_backend_root()
+    metadata_dir = backend_root / 'metadata'
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    
+    report = {
+        'timestamp': datetime.now().isoformat(),
+        'original_records': len(df_original),
+        'cleaned_records': len(df_cleaned),
+        'records_removed': len(df_original) - len(df_cleaned),
+        'removal_percentage': ((len(df_original) - len(df_cleaned)) / len(df_original) * 100),
+        'disposition_distribution': {},
+        'missing_data_stats': {}
+    }
+    
+    # Disposition distribution
+    disp_col = column_mapping.get('koi_disposition', 'koi_disposition')
+    if disp_col in df_cleaned.columns:
+        report['disposition_distribution'] = df_cleaned[disp_col].value_counts().to_dict()
+    
+    # Missing data statistics
+    for col in df_cleaned.columns:
+        missing_pct = (df_cleaned[col].isna().sum() / len(df_cleaned)) * 100
+        if missing_pct > 0:
+            report['missing_data_stats'][col] = f'{missing_pct:.1f}%'
+    
+    # Save report
+    report_path = metadata_dir / 'koi_quality_report.json'
     import json
     with open(report_path, 'w') as f:
-        json.dump(report, f, indent=4, default=str)
-
+        json.dump(report, f, indent=2)
+    
     logging.info(f'Quality report saved: {report_path}')
-    logging.info(f'Data quality summary:')
-    logging.info(
-        f'  Records: {report["original_records"]} → {report["final_records"]} ({report["records_retained_pct"]:.1f}% retained)')
-    logging.info(f'  Columns mapped: {len(column_mapping)}')
-
+    
     return report
 
 
 def create_koi_visualizations(df, column_mapping):
-    """Create visualizations for KOI data"""
+    """Create visualizations of cleaned data"""
     backend_root = detect_backend_root()
     plots_dir = backend_root / 'plots' / 'data_quality'
     plots_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create figure with subplots
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle('KOI Dataset Quality Analysis', fontsize=16, fontweight='bold')
-
-    # 1. Disposition distribution
-    if 'koi_disposition' in column_mapping and column_mapping['koi_disposition'] in df.columns:
-        disp_col = column_mapping['koi_disposition']
-        disp_counts = df[disp_col].value_counts()
-        axes[0, 0].bar(range(len(disp_counts)), disp_counts.values)
-        axes[0, 0].set_title('Disposition Distribution')
-        axes[0, 0].set_xlabel('Disposition Type')
-        axes[0, 0].set_ylabel('Count')
-        axes[0, 0].set_xticks(range(len(disp_counts)))
-        axes[0, 0].set_xticklabels(disp_counts.index, rotation=45, ha='right')
-
-    # 2. Planet radius distribution
-    if 'koi_prad' in column_mapping and column_mapping['koi_prad'] in df.columns:
-        radius_col = column_mapping['koi_prad']
-        valid_radii = df[radius_col].dropna()
-        if len(valid_radii) > 0:
-            axes[0, 1].hist(valid_radii, bins=30, alpha=0.7, edgecolor='black')
-            axes[0, 1].set_title('Planet Radius Distribution')
-            axes[0, 1].set_xlabel('Planet Radius (Earth Radii)')
-            axes[0, 1].set_ylabel('Count')
-
-    # 3. Orbital period distribution
-    if 'koi_period' in column_mapping and column_mapping['koi_period'] in df.columns:
-        period_col = column_mapping['koi_period']
-        valid_periods = df[period_col].dropna()
-        if len(valid_periods) > 0:
-            axes[1, 0].hist(np.log10(valid_periods), bins=30, alpha=0.7, edgecolor='black')
-            axes[1, 0].set_title('Orbital Period Distribution (log scale)')
-            axes[1, 0].set_xlabel('Log10(Orbital Period [days])')
-            axes[1, 0].set_ylabel('Count')
-
-    # 4. Missing values heatmap
-    missing_data = []
-    missing_labels = []
-    for col_key, actual_col in column_mapping.items():
-        if actual_col in df.columns:
-            missing_pct = (df[actual_col].isna().sum() / len(df)) * 100
-            missing_data.append(missing_pct)
-            missing_labels.append(col_key)
-
-    if missing_data:
-        axes[1, 1].bar(range(len(missing_data)), missing_data)
-        axes[1, 1].set_title('Missing Values by Column')
-        axes[1, 1].set_xlabel('Column')
-        axes[1, 1].set_ylabel('Missing Percentage')
-        axes[1, 1].set_xticks(range(len(missing_labels)))
-        axes[1, 1].set_xticklabels(missing_labels, rotation=45, ha='right')
-
-    plt.tight_layout()
-
-    plot_path = plots_dir / 'koi_data_quality_analysis.png'
-    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-    plt.close()
-
-    logging.info(f'Visualization saved: {plot_path}')
+    
+    # Disposition distribution
+    disp_col = column_mapping.get('koi_disposition', 'koi_disposition')
+    if disp_col in df.columns:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        df[disp_col].value_counts().plot(kind='bar', ax=ax)
+        ax.set_title('KOI Disposition Distribution')
+        ax.set_xlabel('Disposition')
+        ax.set_ylabel('Count')
+        plt.tight_layout()
+        plt.savefig(plots_dir / 'koi_disposition_distribution.png', dpi=300)
+        plt.close()
+        
+        logging.info(f'Visualization saved: {plots_dir / "koi_disposition_distribution.png"}')
 
 
 def save_cleaned_koi_data(df, column_mapping):
-    """Save cleaned KOI data"""
+    """Save cleaned KOI dataset"""
     backend_root = detect_backend_root()
-
-    # Save to data/sanitized directory
+    
+    # Output to sanitized directory
     output_dir = backend_root / 'data' / 'sanitized'
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Save CSV as koi_sanitized.csv
+    
     output_path = output_dir / 'koi_sanitized.csv'
     df.to_csv(output_path, index=False)
-
-    # Save column mapping as JSON
-    import json
-    mapping_path = output_dir / 'koi_column_mapping.json'
-    with open(mapping_path, 'w') as f:
-        json.dump(column_mapping, f, indent=2)
 
     logging.info(f'Cleaned KOI data saved: {output_path}')
     logging.info(f'Final dataset shape: {df.shape}')
@@ -344,8 +278,105 @@ def save_cleaned_koi_data(df, column_mapping):
     return output_path
 
 
+def save_unseen_koi_data(df_original, df_cleaned):
+    """Save BAD data that didn't pass sanitization to data/unseen/bad/"""
+    backend_root = detect_backend_root()
+    
+    # Create unseen/bad directory
+    unseen_bad_dir = backend_root / 'data' / 'unseen' / 'bad'
+    unseen_bad_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Find indices that are in original but not in cleaned
+    kept_indices = set(df_cleaned.index)
+    original_indices = set(df_original.index)
+    removed_indices = original_indices - kept_indices
+    
+    # Extract unseen data in original form
+    df_unseen = df_original.loc[list(removed_indices)].copy()
+    
+    if len(df_unseen) > 0:
+        # Save bad unseen data
+        unseen_path = unseen_bad_dir / 'koi_unseen.csv'
+        df_unseen.to_csv(unseen_path, index=False)
+        
+        logging.info(f'❌ Bad/Rejected KOI data saved: {unseen_path}')
+        logging.info(f'   Contains {len(df_unseen)} records ({len(df_unseen)/len(df_original)*100:.1f}% of original)')
+    else:
+        logging.info('No rejected data - all records passed sanitization')
+    
+    return len(df_unseen)
+
+
+def split_train_test_koi(df_cleaned):
+    """Split cleaned data into 70% train / 30% test and save test to data/unseen/good/"""
+    backend_root = detect_backend_root()
+    
+    logging.info('=' * 80)
+    logging.info('SPLITTING DATA: 70% TRAIN / 30% TEST')
+    logging.info('=' * 80)
+    
+    # Get disposition for stratified split
+    disp_col = None
+    for col_name in ['koi_disposition', 'disposition']:
+        if col_name in df_cleaned.columns:
+            disp_col = col_name
+            break
+    
+    # Stratified split if disposition column exists
+    if disp_col:
+        try:
+            df_train, df_test = train_test_split(
+                df_cleaned,
+                test_size=0.30,
+                random_state=42,
+                stratify=df_cleaned[disp_col]
+            )
+            logging.info(f'✓ Stratified split by {disp_col}')
+        except Exception as e:
+            logging.warning(f'Stratified split failed, using random split: {e}')
+            df_train, df_test = train_test_split(
+                df_cleaned,
+                test_size=0.30,
+                random_state=42
+            )
+    else:
+        df_train, df_test = train_test_split(
+            df_cleaned,
+            test_size=0.30,
+            random_state=42
+        )
+        logging.info('✓ Random split (no disposition column found)')
+    
+    # Save training data (70%) to sanitized directory
+    sanitized_dir = backend_root / 'data' / 'sanitized'
+    sanitized_dir.mkdir(parents=True, exist_ok=True)
+    train_path = sanitized_dir / 'koi_sanitized.csv'
+    df_train.to_csv(train_path, index=False)
+    
+    # Save test data (30%) to unseen/good directory
+    unseen_good_dir = backend_root / 'data' / 'unseen' / 'good'
+    unseen_good_dir.mkdir(parents=True, exist_ok=True)
+    test_path = unseen_good_dir / 'koi_unseen.csv'
+    df_test.to_csv(test_path, index=False)
+    
+    logging.info(f'✓ Training data (70%): {len(df_train)} records → {train_path}')
+    logging.info(f'✓ Test data (30%): {len(df_test)} records → {test_path}')
+    
+    # Show distribution if disposition column exists
+    if disp_col:
+        logging.info(f'\nTrain set {disp_col} distribution:')
+        for disp, count in df_train[disp_col].value_counts().items():
+            logging.info(f'  {disp}: {count} ({count/len(df_train)*100:.1f}%)')
+        
+        logging.info(f'\nTest set {disp_col} distribution:')
+        for disp, count in df_test[disp_col].value_counts().items():
+            logging.info(f'  {disp}: {count} ({count/len(df_test)*100:.1f}%)')
+    
+    return len(df_train), len(df_test)
+
+
 def main():
-    """Main KOI data sanitization function with robust path detection"""
+    """Main KOI data sanitization function with train/test split"""
     # Setup logging
     log_dir = Path('logs')
     log_dir.mkdir(exist_ok=True)
@@ -359,7 +390,7 @@ def main():
         ]
     )
 
-    logging.info('Starting KOI data sanitization with robust path detection...')
+    logging.info('Starting KOI data sanitization with train/test split...')
 
     try:
         # Step 1: Find and validate data
@@ -375,18 +406,27 @@ def main():
         # Step 4: Clean numerical columns
         df_cleaned = clean_numerical_columns_koi(df_cleaned, column_mapping)
 
-        # Step 5: Generate quality report
+        # Step 5: Save bad/rejected data to unseen/bad/
+        bad_count = save_unseen_koi_data(df_original, df_cleaned)
+
+        # Step 6: Split cleaned data 70/30 and save
+        train_count, test_count = split_train_test_koi(df_cleaned)
+
+        # Step 7: Generate quality report
         quality_report = generate_koi_quality_report(df_cleaned, df_original, column_mapping)
 
-        # Step 6: Create visualizations
+        # Step 8: Create visualizations
         create_koi_visualizations(df_cleaned, column_mapping)
 
-        # Step 7: Save cleaned data
-        output_path = save_cleaned_koi_data(df_cleaned, column_mapping)
-
-        logging.info('✅ KOI data sanitization completed successfully!')
-        logging.info(f'Input: {len(df_original)} records → Output: {len(df_cleaned)} records')
-        logging.info(f'Cleaned data available at: {output_path}')
+        logging.info('\n' + '=' * 80)
+        logging.info('✅ KOI DATA SANITIZATION COMPLETED SUCCESSFULLY!')
+        logging.info('=' * 80)
+        logging.info(f'Original: {len(df_original)} records')
+        logging.info(f'  ❌ Bad/Rejected: {bad_count} records → data/unseen/bad/')
+        logging.info(f'  ✓ Cleaned: {len(df_cleaned)} records')
+        logging.info(f'    ├─ Training (70%): {train_count} records → data/sanitized/')
+        logging.info(f'    └─ Test (30%): {test_count} records → data/unseen/good/')
+        logging.info('=' * 80)
 
         return True
 

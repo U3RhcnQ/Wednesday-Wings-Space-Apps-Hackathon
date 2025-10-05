@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 import warnings
+from sklearn.model_selection import train_test_split
 
 warnings.filterwarnings('ignore')
 
@@ -454,6 +455,104 @@ def save_cleaned_k2_data(df, column_mapping):
     return output_path
 
 
+def save_unseen_k2_data(df_original, df_cleaned):
+    """Save BAD data that didn't pass sanitization to data/unseen/bad/"""
+    backend_root = detect_backend_root()
+    
+    # Create unseen/bad directory
+    unseen_bad_dir = backend_root / 'data' / 'unseen' / 'bad'
+    unseen_bad_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Find indices that are in original but not in cleaned
+    kept_indices = set(df_cleaned.index)
+    original_indices = set(df_original.index)
+    removed_indices = original_indices - kept_indices
+    
+    # Extract unseen data in original form (before HTML cleaning)
+    df_unseen = df_original.loc[list(removed_indices)].copy()
+    
+    if len(df_unseen) > 0:
+        # Save bad unseen data
+        unseen_path = unseen_bad_dir / 'k2_unseen.csv'
+        df_unseen.to_csv(unseen_path, index=False)
+        
+        logging.info(f'❌ Bad/Rejected K2 data saved: {unseen_path}')
+        logging.info(f'   Contains {len(df_unseen)} records ({len(df_unseen)/len(df_original)*100:.1f}% of original)')
+    else:
+        logging.info('No rejected data - all records passed sanitization')
+    
+    return len(df_unseen)
+
+
+def split_train_test_k2(df_cleaned):
+    """Split cleaned data into 70% train / 30% test and save test to data/unseen/good/"""
+    backend_root = detect_backend_root()
+    
+    logging.info('=' * 80)
+    logging.info('SPLITTING DATA: 70% TRAIN / 30% TEST')
+    logging.info('=' * 80)
+    
+    # Get disposition for stratified split
+    disp_col = None
+    for col_name in ['pl_pubdate', 'default_flag']:
+        if col_name in df_cleaned.columns:
+            # For K2, we use publication date presence as proxy for confirmation
+            if col_name == 'pl_pubdate':
+                df_cleaned['_temp_disp'] = (~df_cleaned[col_name].isna()).astype(int)
+                disp_col = '_temp_disp'
+                break
+            elif col_name == 'default_flag':
+                disp_col = col_name
+                break
+    
+    # Stratified split if disposition column exists
+    if disp_col:
+        try:
+            df_train, df_test = train_test_split(
+                df_cleaned,
+                test_size=0.30,
+                random_state=42,
+                stratify=df_cleaned[disp_col]
+            )
+            logging.info(f'✓ Stratified split by {disp_col}')
+            
+            # Remove temp column if created
+            if '_temp_disp' in df_train.columns:
+                df_train = df_train.drop(columns=['_temp_disp'])
+                df_test = df_test.drop(columns=['_temp_disp'])
+        except Exception as e:
+            logging.warning(f'Stratified split failed, using random split: {e}')
+            df_train, df_test = train_test_split(
+                df_cleaned,
+                test_size=0.30,
+                random_state=42
+            )
+    else:
+        df_train, df_test = train_test_split(
+            df_cleaned,
+            test_size=0.30,
+            random_state=42
+        )
+        logging.info('✓ Random split (no disposition column found)')
+    
+    # Save training data (70%) to sanitized directory
+    sanitized_dir = backend_root / 'data' / 'sanitized'
+    sanitized_dir.mkdir(parents=True, exist_ok=True)
+    train_path = sanitized_dir / 'k2_sanitized.csv'
+    df_train.to_csv(train_path, index=False)
+    
+    # Save test data (30%) to unseen/good directory
+    unseen_good_dir = backend_root / 'data' / 'unseen' / 'good'
+    unseen_good_dir.mkdir(parents=True, exist_ok=True)
+    test_path = unseen_good_dir / 'k2_unseen.csv'
+    df_test.to_csv(test_path, index=False)
+    
+    logging.info(f'✓ Training data (70%): {len(df_train)} records → {train_path}')
+    logging.info(f'✓ Test data (30%): {len(df_test)} records → {test_path}')
+    
+    return len(df_train), len(df_test)
+
+
 def main():
     """Main K2 data sanitization function with robust path detection"""
     # Setup logging
@@ -491,18 +590,27 @@ def main():
         # Step 6: Remove sparse columns (>90% missing data)
         df_cleaned = remove_sparse_columns(df_cleaned, threshold=0.90)
 
-        # Step 7: Generate quality report
+        # Step 7: Save bad/rejected data to unseen/bad/
+        bad_count = save_unseen_k2_data(df_original, df_cleaned)
+
+        # Step 8: Split cleaned data 70/30 and save
+        train_count, test_count = split_train_test_k2(df_cleaned)
+
+        # Step 9: Generate quality report
         quality_report = generate_k2_quality_report(df_cleaned, df_original, column_mapping)
 
-        # Step 8: Create visualizations
+        # Step 10: Create visualizations
         create_k2_visualizations(df_cleaned, column_mapping)
 
-        # Step 9: Save cleaned data
-        output_path = save_cleaned_k2_data(df_cleaned, column_mapping)
-
-        logging.info('✅ K2 data sanitization completed successfully!')
-        logging.info(f'Input: {len(df_original)} records → Output: {len(df_cleaned)} records')
-        logging.info(f'Cleaned data available at: {output_path}')
+        logging.info('\n' + '=' * 80)
+        logging.info('✅ K2 DATA SANITIZATION COMPLETED SUCCESSFULLY!')
+        logging.info('=' * 80)
+        logging.info(f'Original: {len(df_original)} records')
+        logging.info(f'  ❌ Bad/Rejected: {bad_count} records → data/unseen/bad/')
+        logging.info(f'  ✓ Cleaned: {len(df_cleaned)} records')
+        logging.info(f'    ├─ Training (70%): {train_count} records → data/sanitized/')
+        logging.info(f'    └─ Test (30%): {test_count} records → data/unseen/good/')
+        logging.info('=' * 80)
 
         return True
 

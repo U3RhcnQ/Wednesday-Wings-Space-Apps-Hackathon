@@ -36,12 +36,16 @@ current_dir = Path(__file__).parent
 backend_dir = current_dir.parent
 project_root = backend_dir.parent
 
+# Create timestamped run directory for this test
+RUN_TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+RUN_DIR = current_dir / 'plots' / 'realworld' / f'run_{RUN_TIMESTAMP}'
+
 PROJECT_PATHS = {
-    'data_raw': backend_dir / 'data' / 'raw',
+    'data_unseen': backend_dir / 'data' / 'unseen',
     'models': current_dir / 'models',
     'metadata': backend_dir / 'metadata',
-    'plots': current_dir / 'plots' / 'real_world_test',
-    'results': current_dir / 'results',
+    'plots': RUN_DIR,
+    'results': RUN_DIR / 'results',
     'logs': backend_dir / 'logs'
 }
 
@@ -152,23 +156,24 @@ logger = setup_logging()
 # DATA LOADING
 # ============================================================================
 
-def load_raw_data():
-    """Load raw data from all three datasets"""
+def load_unseen_data():
+    """Load unseen data from all three datasets (data that didn't pass sanitization)"""
     logger.info("=" * 80)
-    logger.info("LOADING RAW DATA")
+    logger.info("LOADING UNSEEN DATA (Filtered Out During Sanitization)")
     logger.info("=" * 80)
     
     datasets = {}
     
     for dataset_name in ['k2', 'koi', 'toi']:
-        file_path = PROJECT_PATHS['data_raw'] / f'{dataset_name}.csv'
+        file_path = PROJECT_PATHS['data_unseen'] / f'{dataset_name}_unseen.csv'
         
         if not file_path.exists():
-            logger.warning(f"{dataset_name.upper()} file not found at {file_path}")
+            logger.warning(f"{dataset_name.upper()} unseen file not found at {file_path}")
+            logger.info(f"  Skipping {dataset_name.upper()} - no unseen data available")
             continue
         
         df = pd.read_csv(file_path)
-        logger.info(f"Loaded {dataset_name.upper()}: {df.shape}")
+        logger.info(f"Loaded {dataset_name.upper()} unseen: {df.shape}")
         
         # Create is_confirmed column from disposition
         disposition_mapping = {
@@ -193,7 +198,8 @@ def load_raw_data():
                 df['is_confirmed'] = 0
         
         logger.info(f"  Confirmed: {(df['is_confirmed']==1).sum()}, "
-                   f"Candidates: {(df['is_confirmed']==0).sum()}")
+                   f"Candidates: {(df['is_confirmed']==0).sum()}, "
+                   f"Unknown: {df['is_confirmed'].isna().sum()}")
         
         # Map to unified column names
         unified_df = pd.DataFrame()
@@ -210,11 +216,16 @@ def load_raw_data():
         datasets[dataset_name] = unified_df
         logger.info(f"  Unified columns: {unified_df.shape[1]}")
     
+    if len(datasets) == 0:
+        logger.error("No unseen data found! Please run sanitizers first to generate unseen data.")
+        return None, None
+    
     # Combine all datasets
     combined_df = pd.concat(datasets.values(), ignore_index=True)
-    logger.info(f"Combined dataset: {combined_df.shape}")
+    logger.info(f"Combined unseen dataset: {combined_df.shape}")
     logger.info(f"  Total confirmed: {(combined_df['is_confirmed']==1).sum()}")
     logger.info(f"  Total candidates: {(combined_df['is_confirmed']==0).sum()}")
+    logger.info(f"  Total unknown: {combined_df['is_confirmed'].isna().sum()}")
     
     return combined_df, datasets
 
@@ -687,19 +698,26 @@ def plot_dataset_performance(results, X, y, output_path):
 def main():
     """Main testing pipeline"""
     logger.info("=" * 80)
-    logger.info("REAL-WORLD MODEL PERFORMANCE TESTING")
+    logger.info("UNSEEN DATA MODEL VALIDATION TEST")
+    logger.info("Testing models on data that was filtered out during sanitization")
     logger.info("NASA Space Apps Challenge 2025")
+    logger.info("=" * 80)
+    logger.info(f"Run ID: {RUN_TIMESTAMP}")
+    logger.info(f"Output directory: {PROJECT_PATHS['plots']}")
     logger.info("=" * 80)
     
     start_time = datetime.now()
     
     try:
-        # Step 1: Load raw data
-        logger.info("\nSTEP 1: Loading raw data...")
-        combined_df, individual_datasets = load_raw_data()
+        # Step 1: Load unseen data
+        logger.info("\nSTEP 1: Loading unseen data...")
+        combined_df, individual_datasets = load_unseen_data()
         
-        if len(combined_df) == 0:
-            logger.error("No data loaded!")
+        if combined_df is None or len(combined_df) == 0:
+            logger.error("No unseen data loaded!")
+            logger.info("\nTo generate unseen data, run:")
+            logger.info("  cd Backend/sanitization")
+            logger.info("  python run_all_sanitizers.py")
             return
         
         # Step 2: Feature engineering
@@ -751,24 +769,24 @@ def main():
         
         plot_confusion_matrices(
             results, 
-            PROJECT_PATHS['plots'] / 'confusion_matrices.png'
+            PROJECT_PATHS['plots'] / '1_confusion_matrices.png'
         )
         
         plot_roc_curves(
             results, 
             y,
-            PROJECT_PATHS['plots'] / 'roc_curves.png'
+            PROJECT_PATHS['plots'] / '2_roc_curves.png'
         )
         
         plot_precision_recall_curves(
             results, 
             y,
-            PROJECT_PATHS['plots'] / 'precision_recall_curves.png'
+            PROJECT_PATHS['plots'] / '3_precision_recall_curves.png'
         )
         
         plot_model_comparison(
             results,
-            PROJECT_PATHS['plots'] / 'model_comparison.png'
+            PROJECT_PATHS['plots'] / '4_model_comparison.png'
         )
         
         # Add dataset source back for dataset performance plot
@@ -779,7 +797,7 @@ def main():
             results,
             X_with_source,
             y,
-            PROJECT_PATHS['plots'] / 'dataset_performance.png'
+            PROJECT_PATHS['plots'] / '5_dataset_performance.png'
         )
         
         # Step 8: Save results
@@ -802,12 +820,14 @@ def main():
         
         summary_df = pd.DataFrame(summary_data)
         summary_df = summary_df.sort_values('f1', ascending=False)
-        summary_path = PROJECT_PATHS['results'] / 'real_world_performance_summary.csv'
+        summary_path = PROJECT_PATHS['results'] / 'unseen_data_performance_summary.csv'
         summary_df.to_csv(summary_path, index=False)
         logger.info(f"✓ Saved performance summary to {summary_path}")
         
         # Save detailed report
         report = {
+            'test_type': 'unseen_data_validation',
+            'run_id': RUN_TIMESTAMP,
             'test_timestamp': datetime.now().isoformat(),
             'processing_time_seconds': (datetime.now() - start_time).total_seconds(),
             'test_data_shape': X.shape,
@@ -833,18 +853,90 @@ def main():
             }
         }
         
-        report_path = PROJECT_PATHS['results'] / 'real_world_test_report.json'
+        report_path = PROJECT_PATHS['results'] / 'unseen_data_test_report.json'
         with open(report_path, 'w') as f:
             json.dump(report, f, indent=2)
         logger.info(f"✓ Saved detailed report to {report_path}")
         
+        # Create markdown table manually (without tabulate dependency)
+        def create_markdown_table(df):
+            """Create a markdown table from dataframe without tabulate"""
+            # Header
+            headers = df.columns.tolist()
+            table = "| " + " | ".join(headers) + " |\n"
+            table += "| " + " | ".join(["---"] * len(headers)) + " |\n"
+            
+            # Rows
+            for _, row in df.iterrows():
+                formatted_row = []
+                for col in headers:
+                    val = row[col]
+                    if isinstance(val, float):
+                        formatted_row.append(f"{val:.4f}")
+                    else:
+                        formatted_row.append(str(val))
+                table += "| " + " | ".join(formatted_row) + " |\n"
+            
+            return table
+        
+        models_table = create_markdown_table(summary_df)
+        
+        # Create a README for this run
+        readme_content = f"""# Unseen Data Validation Test - Run {RUN_TIMESTAMP}
+
+## Overview
+This test evaluates trained models on **unseen data** - data that was filtered out during the sanitization process and never used for training.
+
+## Test Date
+{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+## Data Summary
+- **Total samples**: {len(y):,}
+- **Confirmed planets**: {int(y.sum()):,} ({y.sum()/len(y)*100:.1f}%)
+- **Candidates**: {int(len(y) - y.sum()):,} ({(len(y)-y.sum())/len(y)*100:.1f}%)
+
+## Dataset Distribution
+- **K2**: {int((dataset_source == 'k2').sum()):,} samples
+- **KOI**: {int((dataset_source == 'koi').sum()):,} samples
+- **TOI**: {int((dataset_source == 'toi').sum()):,} samples
+
+## Top Performing Models
+
+{models_table}
+
+## Files in This Directory
+1. **1_confusion_matrices.png** - Confusion matrices for all models
+2. **2_roc_curves.png** - ROC curves showing model discrimination ability
+3. **3_precision_recall_curves.png** - Precision-Recall curves
+4. **4_model_comparison.png** - Bar charts comparing all metrics
+5. **5_dataset_performance.png** - Performance breakdown by dataset
+
+## Results Directory
+- **unseen_data_performance_summary.csv** - Metrics summary table
+- **unseen_data_test_report.json** - Detailed results in JSON format
+
+## Notes
+This data represents edge cases and problematic records that didn't pass sanitization checks.
+Models' performance on this data indicates their robustness to:
+- Duplicates
+- Invalid dispositions
+- Out-of-range values
+- High missing data
+"""
+        
+        readme_path = PROJECT_PATHS['plots'] / 'README.md'
+        with open(readme_path, 'w') as f:
+            f.write(readme_content)
+        logger.info(f"✓ Saved README to {readme_path}")
+        
         # Final summary
         logger.info("\n" + "=" * 80)
-        logger.info("TESTING COMPLETE")
+        logger.info("UNSEEN DATA VALIDATION TEST COMPLETE")
         logger.info("=" * 80)
+        logger.info(f"Run ID: {RUN_TIMESTAMP}")
         logger.info(f"Processing time: {(datetime.now() - start_time).total_seconds():.2f} seconds")
-        logger.info(f"Tested {len(results)} models on {len(y)} samples")
-        logger.info(f"\nBest performing model (by F1):")
+        logger.info(f"Tested {len(results)} models on {len(y)} unseen samples")
+        logger.info(f"\nBest performing model on unseen data (by F1):")
         best_model = summary_df.iloc[0]
         logger.info(f"  Model: {best_model['model_name']}")
         logger.info(f"  Accuracy: {best_model['accuracy']:.4f}")
@@ -852,8 +944,10 @@ def main():
         logger.info(f"  Recall: {best_model['recall']:.4f}")
         logger.info(f"  F1: {best_model['f1']:.4f}")
         logger.info(f"  ROC-AUC: {best_model['roc_auc']:.4f}")
-        logger.info(f"\nResults saved to: {PROJECT_PATHS['results']}")
-        logger.info(f"Plots saved to: {PROJECT_PATHS['plots']}")
+        logger.info(f"\n📁 All results saved to: {PROJECT_PATHS['plots']}")
+        logger.info(f"   - Plots: {PROJECT_PATHS['plots']}")
+        logger.info(f"   - Results: {PROJECT_PATHS['results']}")
+        logger.info(f"   - README: {PROJECT_PATHS['plots'] / 'README.md'}")
         logger.info("=" * 80)
         
     except Exception as e:
@@ -867,13 +961,19 @@ def main():
 
 if __name__ == "__main__":
     print("\n" + "=" * 80)
-    print("REAL-WORLD MODEL PERFORMANCE TESTING")
+    print("UNSEEN DATA MODEL VALIDATION TEST")
+    print("Testing models on data filtered out during sanitization")
     print("NASA Space Apps Challenge 2025")
+    print("=" * 80)
+    print(f"Run ID: {RUN_TIMESTAMP}")
     print("=" * 80)
     
     main()
     
-    print("\n✓ Testing completed!")
-    print(f"  Results: {PROJECT_PATHS['results']}")
-    print(f"  Plots: {PROJECT_PATHS['plots']}")
+    print("\n✓ Validation test completed!")
+    print(f"  📁 Output directory: {PROJECT_PATHS['plots']}")
+    print(f"  📊 Plots: {PROJECT_PATHS['plots']}")
+    print(f"  📈 Results: {PROJECT_PATHS['results']}")
+    print(f"  📄 README: {PROJECT_PATHS['plots'] / 'README.md'}")
+    print("\n💡 Each run creates a new timestamped directory for easy comparison!")
 
