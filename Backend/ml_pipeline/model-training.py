@@ -239,7 +239,7 @@ class ExoplanetModelTrainer:
                 random_state=42, verbose=1
             ),
             'AdaBoost': AdaBoostClassifier(
-                n_estimators=800, learning_rate=0.3, algorithm='SAMME.R', random_state=42
+                n_estimators=800, learning_rate=0.3, algorithm='SAMME', random_state=42
             )
         }
         
